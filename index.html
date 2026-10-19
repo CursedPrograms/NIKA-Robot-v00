@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NIKA — the robot that thinks in square waves</title>
+<meta name="description" content="NIKA is a tracked UNO + ESP8266 robot from the DREAM Robotics fleet whose mind is a synthesizer: her drives are square-wave oscillators, and the loudest one is her thought.">
+<meta name="color-scheme" content="dark">
+<meta property="og:title" content="NIKA — the robot that thinks in square waves">
+<meta property="og:description" content="A tracked UNO + ESP8266 robot whose mind is a synthesizer.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="images/nika-icon.png">
+<link rel="icon" href="site/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="site/apple-touch-icon.png">
+<link rel="stylesheet" href="site/style.css">
+<script src="site/site.js" defer></script>
+</head>
+<body>
+
+<nav aria-label="Primary">
+  <div class="wrap">
+    <a class="brand" href="#top">NIKA</a>
+    <ul>
+      <li><a href="#overview">Overview</a></li>
+      <li><a href="#brain">Synth brain</a></li>
+      <li><a href="#hardware">Hardware</a></li>
+      <li><a href="#quickstart">Quick start</a></li>
+      <li><a href="https://github.com/CursedPrograms/NIKA-Robot-v00">GitHub</a></li>
+    </ul>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="wrap">
+    <div class="eyebrow">A DREAM Robotics Agent &middot; Tracked</div>
+    <h1>NIKA</h1>
+    <p class="tagline">The robot that thinks in square waves</p>
+    <p class="lede">MILA&rsquo;s sister: the same board, tracks and fleet link, with sixteen RGB LEDs, a small OLED, an infrared obstacle sensor and a synthesizer for a brain. You can hear her think.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/CursedPrograms/NIKA-Robot-v00">View on GitHub</a>
+      <a class="btn" href="#brain">The synth brain</a>
+      <a class="btn" href="https://ko-fi.com/cursedentertainment">Support on Ko-fi</a>
+    </div>
+    <div class="tags" aria-label="Technologies">
+      <span class="tag">C++</span>
+      <span class="tag">Python</span>
+      <span class="tag">Arduino UNO</span>
+      <span class="tag">ESP8266</span>
+      <span class="tag">Synthesizer</span>
+      <span class="tag">MIT License</span>
+    </div>
+    <figure class="avatar">
+      <img src="images/nika-icon.png" alt="NIKA's icon: a square wave inside a ring of sixteen coloured LEDs" width="512" height="512">
+      <figcaption>NIKA &middot; icon</figcaption>
+    </figure>
+  </div>
+</header>
+
+<main>
+
+<section id="overview">
+  <div class="wrap">
+    <h2>Overview</h2>
+    <h3 class="title">Everything MILA does, and a mind you can hear</h3>
+    <div class="grid cols-3">
+      <div class="card"><span class="k">Drive</span><h4>Three modes</h4><p>WASD, TANK and OBSTACLE, from the remote, her dashboard on <code>:5013</code>, the Python controller or NORA&rsquo;s IR link.</p></div>
+      <div class="card"><span class="k">Sense</span><h4>Two ways to see a wall</h4><p>An ultrasonic on a servo looks ahead and to both diagonals, and an infrared sensor says &ldquo;something&rsquo;s there&rdquo;. Either one stops her.</p></div>
+      <div class="card"><span class="k">Show</span><h4>Sixteen LEDs and an OLED</h4><p>The LEDs are the colour of her thought while she drives; the OLED shows her mode, what&rsquo;s ahead and what she&rsquo;s thinking.</p></div>
+      <div class="card"><span class="k">Think</span><h4>A synthesizer brain</h4><p>Her drives are square-wave oscillators. The loudest is her thought, and the synth plays it.</p></div>
+      <div class="card"><span class="k">Fleet</span><h4>The ladder and the link</h4><p>She joins the fleet&rsquo;s network at the very bottom, below MILA, registers with the hub, and NORA can drive her over IR (<code>0x0DA5</code>).</p></div>
+      <div class="card"><span class="k">Safe</span><h4>The guard and her PIN</h4><p>Driven by hand she won&rsquo;t go into a wall, ticks faster as one gets close, and only an unlocked controller can drive her.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="brain">
+  <div class="wrap">
+    <h2>The synth brain</h2>
+    <h3 class="title">She thinks in square waves</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Drive</th><th>Frequency</th><th>What moves it</th><th>Exploring, she drives at</th></tr></thead>
+        <tbody>
+          <tr><td>calm</td><td class="mono">196 Hz</td><td>always there, the hum underneath</td><td>80%</td></tr>
+          <tr><td>curious</td><td class="mono">220&ndash;660 Hz</td><td>the way ahead staying open</td><td>100%</td></tr>
+          <tr><td>caution</td><td class="mono">220&ndash;880 Hz</td><td>something getting close; 880 when the IR sensor sees it</td><td>45%</td></tr>
+          <tr><td>social</td><td class="mono">523 Hz, fading</td><td>hearing NORA over the IR link</td><td>55%, and a hello</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="muted spaced">A digital potentiometer sits where the synthesizer kit&rsquo;s frequency pot was, so NIKA sets its pitch, and with the kit&rsquo;s square-wave jumper on, what you hear is her thought.</p>
+  </div>
+</section>
+
+<section id="hardware">
+  <div class="wrap">
+    <h2>Hardware</h2>
+    <h3 class="title">What she's built from</h3>
+    <ol class="parts">
+      <li><span class="n">01</span> UNO + WiFi R3 board (ATmega328P + ESP8266), like MILA</li>
+      <li><span class="n">02</span> L298N motor driver and a tracked chassis</li>
+      <li><span class="n">03</span> HC-SR04 ultrasonic on a servo</li>
+      <li><span class="n">04</span> IR obstacle sensor (on/off)</li>
+      <li><span class="n">05</span> 16-LED RGB array (WS2812)</li>
+      <li><span class="n">06</span> SSD1306 128&times;32 SPI OLED</li>
+      <li><span class="n">07</span> Synthesizer kit (XR2206-style) + MCP41010 digital pot</li>
+      <li><span class="n">08</span> IR remote + receiver, buzzer</li>
+    </ol>
+  </div>
+</section>
+
+<section id="quickstart">
+  <div class="wrap">
+    <h2>Quick start</h2>
+    <h3 class="title">Get her thinking</h3>
+    <ol class="steps">
+      <li>Copy <code>scripts/esp8266/secrets.example.h</code> to <code>secrets.h</code>.</li>
+      <li>Flash <code>scripts/NIKA</code> to the UNO and <code>scripts/esp8266</code> to the ESP8266, with the DIP switches set for each.</li>
+      <li>Put the synth kit&rsquo;s jumper on square wave, and tune <code>SYNTH_K</code> by ear.</li>
+      <li>Power her on and open <code>http://&lt;her IP&gt;:5013/</code>, or run <code>run.bat</code>.</li>
+    </ol>
+  </div>
+</section>
+
+<section id="related">
+  <div class="wrap">
+    <h2>DREAM Robotics</h2>
+    <h3 class="title">The rest of the family</h3>
+    <div class="related">
+      <a href="https://github.com/CursedPrograms/MILA-Robot-v00">MILA-Robot-v00</a>
+      <a href="https://github.com/CursedPrograms/NORA-Robot-v00">NORA-Robot-v00</a>
+      <a href="https://github.com/CursedPrograms/WHIP-Robot-v00">WHIP-Robot-v00</a>
+      <a href="https://github.com/CursedPrograms/IDA-Robot-v00">IDA-Robot-v00</a>
+      <a href="https://github.com/CursedPrograms/KIDA-Robot-v00">KIDA-Robot-v00</a>
+      <a href="https://github.com/CursedPrograms/KIDA-Robot-v01">KIDA-Robot-v01</a>
+      <a href="https://github.com/CursedPrograms/ARM-Robot-v01">ARM-Robot-v01</a>
+      <a href="https://github.com/CursedPrograms/RIFT">RIFT</a>
+      <a href="https://github.com/CursedPrograms/RITA">RITA</a>
+      <a href="https://github.com/CursedPrograms/DREAM">DREAM</a>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="links">
+      <a href="https://github.com/CursedPrograms/NIKA-Robot-v00">GitHub</a>
+      <a href="https://x.com/NorowaretaGemu">X: @NorowaretaGemu</a>
+      <a href="https://cursed-entertainment.itch.io/">itch.io</a>
+      <a href="https://ko-fi.com/cursedentertainment">Ko-fi</a>
+      <a href="https://github.com/CursedPrograms/NIKA-Robot-v00/blob/main/LICENSE">MIT License</a>
+    </div>
+    <div class="logos">
+      <a href="https://ko-fi.com/cursedentertainment">
+        <img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support Cursed Entertainment on Ko-fi" width="180" loading="lazy">
+      </a>
+      <a href="https://cursed-entertainment.itch.io/">
+        <img src="https://github.com/CursedPrograms/cursedentertainment/raw/main/images/logos/logo-wide-grey.png" alt="Cursed Entertainment" width="250" loading="lazy">
+      </a>
+    </div>
+    <div>&copy; Cursed Entertainment 2026</div>
+  </div>
+</footer>
+
+<!-- DREAM-ECOSYSTEM:START -->
+<section class="eco">
+  <div class="eco-title">The DREAM Robotics ecosystem</div>
+  <div><strong>Minds</strong> — <a href="https://github.com/CursedPrograms/DREAM">DREAM</a> companion · <a href="https://github.com/CursedPrograms/TINA">TINA</a> engineer · <a href="https://github.com/CursedPrograms/NINA">NINA</a> caretaker · <a href="https://github.com/CursedPrograms/RIFT">RIFT</a> fleet hub · <a href="https://github.com/CursedPrograms/LYCEA">LYCEA</a> training school</div>
+  <div><strong>Robots</strong> — <a href="https://github.com/CursedPrograms/NORA-Robot-v00">NORA</a> · <a href="https://github.com/CursedPrograms/MILA-Robot-v00">MILA</a> · <a href="https://github.com/CursedPrograms/WHIP-Robot-v00">WHIP</a> · <a href="https://github.com/CursedPrograms/KIDA-Robot-v00">KIDA-00</a> · <a href="https://github.com/CursedPrograms/KIDA-Robot-v01">KIDA-01</a> · <a href="https://github.com/CursedPrograms/IDA-Robot-v00">IDA</a> · <a href="https://github.com/CursedPrograms/ARM-Robot-v01">ARM</a> · <a href="https://github.com/CursedPrograms/NIKA-Robot-v00">NIKA</a></div>
+  <div><strong>Remotes</strong> — <a href="https://github.com/CursedPrograms/RITA">RITA</a> handheld remote</div>
+  <div><strong>Tools</strong> — <a href="https://github.com/CursedPrograms/CRUSH">CRUSH</a> compression · <a href="https://github.com/CursedPrograms/Image-Generator">Image-Generator</a> · <a href="https://github.com/CursedPrograms/GloriosaAI">GloriosaAI</a> · <a href="https://github.com/CursedPrograms/SynthWomb">SynthWomb</a> · <a href="https://github.com/CursedPrograms/PyVitals">PyVitals</a></div>
+</section>
+<!-- DREAM-ECOSYSTEM:END -->
+</body>
+</html>

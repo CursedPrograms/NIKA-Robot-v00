@@ -1,0 +1,1271 @@
+#include <ESP8266WiFi.h>
+#include <ESP8266WebServer.h>
+#include <ESP8266mDNS.h>
+#include <ArduinoOTA.h>
+#include <espnow.h>
+#include "keys_page.h"   // /keys: every key and button (generated from scripts/keymap.py)
+
+// === FLEET PROXIMITY (ESP-NOW) ===
+// NIKA broadcasts the fleet's "I'm here" beacon (same packet as NORA's and
+// WHIP's fleet_near.h) twice a second, so the ESP32 robots can tell how close
+// she is from its signal strength, and what she's doing - said in Brainfuck,
+// like the fleet's conversations: a program that prints park / go / hand.
+// Send-only: the ESP8266's ESP-NOW library doesn't report the RSSI of what it
+// receives, so she can't avoid the others - they always make way for her.
+struct __attribute__((packed)) FleetBeacon {
+  char magic[4];      // "DRFL"
+  uint8_t version;    // 1
+  char name[12];
+  uint16_t seq;
+  char bf[72];        // Brainfuck that prints her state word
+};
+const char* const FLEET_BF_PARK = "++++++++[>++++++++++++++<-]>.---------------.<++++[>++++<-]>+.-------.";
+const char* const FLEET_BF_GO   = "++++++++[>+++++++++++++<-]>-.++++++++.";
+const char* const FLEET_BF_HAND = "++++++++[>+++++++++++++<-]>.-------.+++++++++++++.----------.";
+String currentMode = "wasd";   // up here: the beacon below says what she is doing
+String lastCommand = "STOP";
+uint8_t fleetBroadcast[6] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+bool fleetNearOk = false;
+uint16_t fleetSeq = 0;
+unsigned long fleetNextBeaconMs = 0;
+
+void fleetNearBegin() {
+  if (esp_now_init() != 0) return;
+  esp_now_set_self_role(ESP_NOW_ROLE_COMBO);
+  esp_now_add_peer(fleetBroadcast, ESP_NOW_ROLE_COMBO, 0, NULL, 0);   // channel 0 = the one the WiFi is on
+  fleetNearOk = true;
+}
+
+void fleetNearLoop() {
+  if (!fleetNearOk || millis() < fleetNextBeaconMs) return;
+  fleetNextBeaconMs = millis() + 500 + random(0, 60);
+  FleetBeacon b;
+  memset(&b, 0, sizeof(b));
+  memcpy(b.magic, "DRFL", 4);
+  b.version = 1;
+  strncpy(b.name, "NIKA", sizeof(b.name) - 1);
+  b.seq = fleetSeq++;
+  // driving herself (obstacle mode), driven by you, or standing still
+  const char* say = currentMode == "obstacle" ? FLEET_BF_GO : lastCommand != "STOP" ? FLEET_BF_HAND : FLEET_BF_PARK;
+  strncpy(b.bf, say, sizeof(b.bf) - 1);
+  esp_now_send(fleetBroadcast, (uint8_t*)&b, sizeof(b));
+}
+
+// === WIFI ===
+// The fleet's ladder, the same rule for every robot (fleet TODO, section 2):
+//     RIFT > DREAM > NINA > TINA                                        (the hub, the virtual bots)
+//     > NORACTL > WHIPCTL > KIDA01CTL > KIDA00CTL > ARMCTL               (the PC controllers, in their bots' order)
+//     > NORA > WHIP > KIDA01 > KIDA00 > ARM > MILA > NIKA                (the real bots)
+// ARM, an ESP8266 like her, is above her: his controller is usually on with him.
+// NIKA is at the bottom (an ESP8266 is too weak to host for the others): she joins the highest
+// network she can see (LADDER), and keeps scanning and moves up when a higher one appears
+// (motors stopped first); the network she's on gone for NET_LOST_MS: she climbs again from what
+// she can see. Only when she's alone does she host her own "NIKA" AP (192.168.4.1), for direct
+// control. She registers every FLEET_HEARTBEAT_MS with whoever hosts: the network's gateway.
+// Names and passwords come from secrets.h (secrets.example.h shows the layout).
+#if __has_include("secrets.h")
+#include "secrets.h"
+#else
+#warning "No secrets.h: building with secrets.example.h's placeholders (copy it to secrets.h and fill it in)"
+#include "secrets.example.h"
+#endif
+const char* fleet_password = FLEET_PASSWORD;
+const char* nora_password = NORA_PASSWORD;
+const char* nika_ssid     = NIKA_AP_SSID;
+const char* nika_password = NIKA_AP_PASSWORD;
+const unsigned long WIFI_JOIN_TIMEOUT_MS = 20000;   // RIFT at boot (the router and hub start slower); WHIP waits 15 s
+const unsigned long WIFI_SWITCH_TIMEOUT_MS = 10000; // any other network on the ladder
+const unsigned long NET_LOST_MS = 60000;            // the network she's on gone this long: climb again
+
+// The networks above NIKA, highest first (everyone: she's the lowest, below MILA). RIFT has its own password; every robot's own AP uses the
+// fleet's fallback password (NORA_PASSWORD, the same on every robot).
+const char* const LADDER[] = { FLEET_SSID, "DREAM", "NINA", "TINA", "NORACTL", "WHIPCTL", "KIDA01CTL", "KIDA00CTL", "ARMCTL", NORA_SSID, "WHIP", "KIDA01", "KIDA00", "ARM", "MILA" };
+const int LADDER_N = sizeof(LADDER) / sizeof(LADDER[0]);
+int net = -1;                                       // the LADDER network she's on; -1 = hosting her own
+const uint8_t OWN_AP_CHANNEL = 1;                   // the ladder's hosts all use channel 1
+
+const IPAddress fleetHostDefault(192, 168, 4, 1);   // where the ladder's hosts are, if the network won't say
+
+// The fleet registry: whoever hosts the network she's on - its gateway (RIFT, NORA... all 192.168.4.1,
+// but a KIDA hosting with NetworkManager may not be).
+IPAddress fleetHost() {
+  IPAddress gw = WiFi.gatewayIP();
+  return (net >= 0 && gw.isSet()) ? gw : fleetHostDefault;
+}
+const unsigned long FLEET_HEARTBEAT_MS = 10000;   // the registry drops entries after 20 s of silence
+const char* const MY_CAPS = "wasd,tank,obstacle_avoidance,talk:5013";   // talk:<port>: RIFT can /chirp here
+
+// === RADAR (passive imposter spotter) ===
+// NIKA listens to the WiFi around her and flags anything that isn't one of
+// our own networks as an "imposter". This is passive: she only scans and
+// reports. She never connects to or touches a network that isn't hers.
+// A scan channel-hops, which drops packets on her link, so on RIFT's network
+// she only scans while someone has /radar open (like NORA's radar). Lower on
+// the ladder she scans now and then, to find a higher one; hosting her own AP
+// every RADAR_SCAN_MS, because that's how she finds the fleet.
+const char* const FLEET_SSIDS[] = { "RIFT", "DREAM", "NINA", "TINA", "NORACTL", "WHIPCTL", "KIDA01CTL", "KIDA00CTL", "ARMCTL", "NORA", "WHIP", "KIDA01", "KIDA00", "MILA", "ARM", "NIKA" };
+const unsigned long RADAR_SCAN_MS = 20000;   // rescan at most this often
+const unsigned long RADAR_CLIMB_MS = 60000;  // on a lower network: look for a higher one this often
+const unsigned long RADAR_WANTED_MS = 30000; // on RIFT's network: scan while /radar was asked for this recently
+String radarJson = "{\"scanning\":false,\"nets\":[]}";
+unsigned long lastRadarScan = 0;
+unsigned long radarWantedMs = 0;
+bool radarInFlight = false;
+bool higherSeen = false;                     // the last scan saw a network above the one she's on
+
+int ladderRank(const String& ssid) {          // its place in LADDER, or -1 if it isn't above NIKA
+  for (int i = 0; i < LADDER_N; i++) if (ssid == LADDER[i]) return i;
+  return -1;
+}
+
+bool isFleetSsid(const String& s) {
+  for (unsigned i = 0; i < sizeof(FLEET_SSIDS) / sizeof(FLEET_SSIDS[0]); i++) {
+    if (s == FLEET_SSIDS[i]) return true;
+  }
+  return false;
+}
+
+String jsonEscape(const String& in) {
+  String out;
+  for (unsigned i = 0; i < in.length(); i++) {
+    char c = in[i];
+    if (c == '"' || c == '\\') { out += '\\'; out += c; }
+    else if (c == '\n' || c == '\r' || c == '\t') { out += ' '; }
+    else out += c;
+  }
+  return out;
+}
+
+// === CONTROL LOCK ===
+// A device must unlock with the PIN before it can drive NIKA. The unlocked
+// device is remembered by IP; a new device must re-enter the PIN. Looking
+// (the page, /status, /radar, /scan while she's standing still) is always
+// allowed; driving is not.
+const char* const CONTROL_PIN = CONTROL_PIN_SECRET;   // secrets.h
+IPAddress controllerIP(0, 0, 0, 0);
+bool controllerUnlocked = false;
+bool fleetMode = false;   // true = on RIFT's or NORA's network (a registry at 192.168.4.1); false = our own AP
+
+// === WEB SERVER ===
+ESP8266WebServer server(5013);
+// her fleet list on :5000 while she hosts her own AP (see HER FLEET LIST below)
+ESP8266WebServer fleetList(5000);
+const int FLEET_MAX = 8;
+const unsigned long FLEET_TTL_MS = 20000;          // like RIFT and NORA: gone after 20 s without a heartbeat
+struct FleetEntry { bool used; String name, type, caps; IPAddress ip; unsigned long seenMs; };
+FleetEntry fleetEntries[FLEET_MAX];
+
+// === STATE ===
+float  lastDist    = 0;
+String lastLeft    = "---";
+String lastRight   = "---";
+String lastTurn    = "";
+String lastIR      = "---";
+int    lastMotorL  = 0;       // actual track state from the Arduino: -1 back, 0 off, +1 forward
+int    lastMotorR  = 0;
+String lastThought = "calm";   // THOUGHT:<name>,<Hz> from the UNO (her synth brain)
+int    lastHz      = 196;
+int    lastIrd     = 0;       // the IR obstacle sensor: 1 = something in front
+int    lastSpeed   = 100;
+long   scanL = -1, scanF = -1, scanR = -1;   // the last SCAN, cm (999 = no echo, -1 = never scanned)
+unsigned long scanAtMs = 0;                  // when it came in (0 = never)
+bool   scanBusy    = false;                  // the UNO answered SCAN:BUSY (obstacle mode)
+bool   lastGuard   = false;   // true while the manual-mode collision guard has force-stopped the robot
+
+// === CONNECTION WATCHDOG ===
+// All clients (web dashboard and the desktop controllers) poll /status every
+// 400ms for as long as they're running, whereas drive commands are only
+// sent once per button press/release — so a gap in /status polling, not a
+// gap in /cmd, is what actually tells us the client died or WiFi dropped.
+// Without this, losing the connection mid-drive leaves the motors running
+// forever since no STOP ever arrives.
+const unsigned long CONN_TIMEOUT_MS = 1500;
+unsigned long lastStatusPollMs = 0;
+
+// =====================
+// Join a network as a station. True if it worked within timeoutMs.
+bool joinNet(const char* ssid, const char* password, unsigned long timeoutMs) {
+  WiFi.softAPdisconnect(true);
+  WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);       // a short drop (a busy router, a scan) reconnects by itself
+  WiFi.begin(ssid, password);
+  unsigned long attemptStart = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - attemptStart < timeoutMs) {
+    delay(250);
+  }
+  return WiFi.status() == WL_CONNECTED;
+}
+
+// Host our own AP ("NIKA", 192.168.4.1, channel 1) - the robots below her on the ladder join it.
+void startOwnAp() {
+  WiFi.disconnect();
+  IPAddress local_ip(192, 168, 4, 1);
+  IPAddress gateway(192, 168, 4, 1);
+  IPAddress subnet(255, 255, 255, 0);
+
+  WiFi.mode(WIFI_AP);
+  WiFi.softAPConfig(local_ip, gateway, subnet);
+  WiFi.softAP(nika_ssid, nika_password, OWN_AP_CHANNEL);
+  delay(500);
+}
+
+// Climb the ladder: look around (a blocking scan, ~2 s), join the highest network above her
+// that lets her in, else host her own. Sets net and fleetMode.
+void climb(unsigned long riftMs) {
+  bool seen[LADDER_N] = { false };
+  WiFi.mode(WIFI_STA);
+  int n = WiFi.scanNetworks(false, false);
+  for (int i = 0; i < n; i++) {
+    int r = ladderRank(WiFi.SSID(i));
+    if (r >= 0) seen[r] = true;
+  }
+  WiFi.scanDelete();
+  net = -1;
+  for (int r = 0; r < LADDER_N && net < 0; r++) {
+    if (seen[r] && joinNet(LADDER[r], r == 0 ? fleet_password : nora_password,
+                           r == 0 ? riftMs : WIFI_SWITCH_TIMEOUT_MS)) net = r;
+  }
+  if (net < 0) startOwnAp();
+  fleetMode = net >= 0;
+  higherSeen = false;
+}
+
+// Called every loop: climb when a scan has seen a network above the one she's on (or above her,
+// while she hosts), and when the one she's on has been gone for NET_LOST_MS.
+void wifiWatch() {
+  static unsigned long lostSince = 0;
+  bool lost = false;
+  if (!higherSeen && net >= 0) {                  // on a ladder network: still there?
+    if (WiFi.status() == WL_CONNECTED) { lostSince = 0; return; }
+    if (lostSince == 0) { lostSince = millis(); return; }
+    if (millis() - lostSince < NET_LOST_MS) return;
+    lost = true;
+  }
+  if (!higherSeen && !lost) return;
+  lostSince = 0;
+  Serial.println("STOP");                          // nobody can reach her during the switch: stand still
+  lastCommand = "STOP";
+  climb(WIFI_SWITCH_TIMEOUT_MS);
+  MDNS.notifyAPChange();
+  if (fleetMode) fleetRegister();
+}
+
+// =====================
+void setup() {
+  Serial.begin(115200);
+  delay(100);
+
+  climb(WIFI_JOIN_TIMEOUT_MS);
+
+  // Routes
+  server.on("/keys",   []() { server.send_P(200, "text/html", KEYS_HTML); });
+  server.on("/",       handleRoot);
+  server.on("/cmd",    handleCmd);
+  server.on("/mode",   handleMode);
+  server.on("/status", handleStatus);
+  server.on("/fleet",  handleFleet);
+  server.on("/radar",  handleRadar);
+  server.on("/unlock", handleUnlock);
+  server.on("/scan",   handleScan);
+  server.on("/chirp",  handleChirp);
+
+  server.begin();
+  setupFleetList();                 // :5000, for the robots below her when she hosts
+
+  if (fleetMode) fleetRegister();
+  fleetNearBegin();
+
+  if (MDNS.begin("nika")) {
+    MDNS.addService("http", "tcp", 5013);
+  }
+
+  ArduinoOTA.setHostname("nika");
+  ArduinoOTA.begin();
+
+  // Boot into WASD mode
+  Serial.println("WASD");
+}
+
+// =====================
+void loop() {
+  fleetNearLoop();
+  radarLoop();
+  wifiWatch();
+  server.handleClient();
+  fleetList.handleClient();
+  ArduinoOTA.handle();
+  MDNS.update();
+
+  if (fleetMode) {
+    static unsigned long lastHeartbeat = 0;
+    if (millis() - lastHeartbeat >= FLEET_HEARTBEAT_MS) {
+      lastHeartbeat = millis();
+      fleetRegister();
+    }
+  }
+
+  // Connection watchdog: if a client was polling /status and stops
+  // (WiFi drop, closed app) while something is still driving, stop it.
+  if (lastStatusPollMs != 0 && currentMode != "obstacle" && lastCommand != "STOP" &&
+      millis() - lastStatusPollMs > CONN_TIMEOUT_MS) {
+    lastCommand = "STOP";
+    Serial.println("STOP");
+  }
+
+  // Read sensor data from Arduino
+  while (Serial.available()) readArduinoLine();
+}
+
+// One line from the Arduino. Also called while /scan waits for its answer.
+void readArduinoLine() {
+  String line = Serial.readStringUntil('\n');
+  line.trim();
+  if (line == "WHO") Serial.println("I am NikaWifi");   // the fleet-wide handshake (the UNO ignores it)
+  if (line == "SCAN:BUSY") scanBusy = true;
+  else if (line.startsWith("SCAN:")) {                  // SCAN:<left>,<front>,<right>
+    int a = line.indexOf(','), b = line.indexOf(',', a + 1);
+    if (a > 5 && b > a) {
+      scanL = line.substring(5, a).toInt();
+      scanF = line.substring(a + 1, b).toInt();
+      scanR = line.substring(b + 1).toInt();
+      scanAtMs = millis();
+    }
+  }
+  if (line.startsWith("DIST:"))  lastDist  = line.substring(5).toFloat();
+  if (line.startsWith("LEFT:"))  lastLeft  = line.substring(5);
+  if (line.startsWith("RIGHT:")) lastRight = line.substring(6);
+  if (line.startsWith("TURN:"))  lastTurn  = line.substring(5);
+  if (line.startsWith("IR:"))    lastIR    = line.substring(3);
+  if (line.startsWith("THOUGHT:")) {                   // THOUGHT:<name>,<Hz> (the synth brain)
+    int comma = line.indexOf(',');
+    if (comma > 8) { lastThought = line.substring(8, comma); lastHz = line.substring(comma + 1).toInt(); }
+  }
+  if (line.startsWith("IRD:"))   lastIrd      = line.substring(4).toInt();
+  if (line.startsWith("SPEED:")) lastSpeed    = line.substring(6).toInt();
+  if (line.startsWith("GUARD:")) lastGuard    = line.substring(6).toInt() != 0;
+  if (line.startsWith("MOTOR:")) {
+    int comma = line.indexOf(',');
+    if (comma > 6) {
+      lastMotorL = line.substring(6, comma).toInt();
+      lastMotorR = line.substring(comma + 1).toInt();
+    }
+  }
+}
+
+// =====================
+// Registers/heartbeats with NORA's fleet registry (see NORA's esp32.ino,
+// port 5000: POST /register with name/type/capabilities). Best-effort —
+// if NORA's registry doesn't respond we just move on and try again next
+// heartbeat interval.
+void fleetRegister() {
+  WiFiClient client;
+  if (!client.connect(fleetHost(), 5000)) return;
+
+  // talk:<port> = RIFT's conversations can /chirp here
+  String body = String("name=NIKA&type=tank&capabilities=") + MY_CAPS;
+  client.print(String("POST /register HTTP/1.1\r\n") +
+               "Host: " + fleetHost().toString() + "\r\n" +
+               "Content-Type: application/x-www-form-urlencoded\r\n" +
+               "Content-Length: " + body.length() + "\r\n" +
+               "Connection: close\r\n\r\n" +
+               body);
+  client.stop();
+}
+
+// =====================
+// RIFT's fleet conversations: /chirp?u=<0-13> says that utterance (a Brainfuck
+// phrase, see ../NIKA/talk_bf.h) on the UNO's buzzer, which beeps it.
+void handleChirp() {
+  int u = server.hasArg("u") ? server.arg("u").toInt() : -1;
+  if (!server.hasArg("u") || u < 0 || u > 13) {
+    server.send(400, "application/json", "{\"ok\":false,\"error\":\"use /chirp?u=0-13\"}");
+    return;
+  }
+  Serial.print("TALK:");
+  Serial.println(u);
+  server.send(200, "application/json", "{\"ok\":true}");
+}
+
+// =====================
+String currentIP() {
+  return fleetMode ? WiFi.localIP().toString() : WiFi.softAPIP().toString();
+}
+
+// =====================
+// Passive WiFi radar. Kick off an async scan no more than every
+// RADAR_SCAN_MS, then pick up the result on a later loop and cache it as
+// JSON. Each network is tagged friend/imposter; we never touch imposters.
+void radarLoop() {
+  bool looked = radarWantedMs != 0 && millis() - radarWantedMs < RADAR_WANTED_MS;   // /radar is open
+  bool wanted = net != 0 || looked;                 // on RIFT (the top) only for the page
+  unsigned long gap = (net > 0 && !looked) ? RADAR_CLIMB_MS : RADAR_SCAN_MS;
+  if (!radarInFlight && wanted && (lastRadarScan == 0 || millis() - lastRadarScan >= gap)) {
+    // async = true (non-blocking), show_hidden = true
+    WiFi.scanNetworks(true, true);
+    radarInFlight = true;
+    lastRadarScan = millis();
+    return;
+  }
+
+  if (radarInFlight) {
+    int n = WiFi.scanComplete();
+    if (n == WIFI_SCAN_RUNNING || n == WIFI_SCAN_FAILED) {
+      if (n == WIFI_SCAN_FAILED) radarInFlight = false;
+      return;
+    }
+    // Scan finished with n networks: build the cached report.
+    int imposters = 0;
+    String j = "{\"scanning\":false,\"nets\":[";
+    for (int i = 0; i < n; i++) {
+      String ssid = WiFi.SSID(i);
+      String shown = ssid.length() ? jsonEscape(ssid) : "(hidden)";
+      bool fleet = ssid.length() && isFleetSsid(ssid);
+      if (!fleet) imposters++;
+      int rank = ladderRank(ssid);
+      if (rank >= 0 && (net < 0 || rank < net)) higherSeen = true;   // wifiWatch() climbs to it
+      if (i) j += ",";
+      j += "{\"ssid\":\"" + shown + "\",";
+      j += "\"rssi\":" + String(WiFi.RSSI(i)) + ",";
+      j += "\"imposter\":" + String(fleet ? "false" : "true") + "}";
+    }
+    j += "],\"imposters\":" + String(imposters) + "}";
+    radarJson = j;
+    WiFi.scanDelete();
+    radarInFlight = false;
+  }
+}
+
+void handleRadar() {
+  radarWantedMs = millis();              // someone's looking: keep scanning for a while
+  server.send(200, "application/json", radarJson);
+}
+
+bool isController() {
+  return controllerUnlocked && server.client().remoteIP() == controllerIP;
+}
+
+void handleUnlock() {
+  if (server.hasArg("pw") && server.arg("pw") == CONTROL_PIN) {
+    controllerIP = server.client().remoteIP();
+    controllerUnlocked = true;
+    server.send(200, "application/json",
+                "{\"ok\":true,\"controller\":\"" + controllerIP.toString() + "\"}");
+  } else {
+    server.send(403, "application/json", "{\"ok\":false,\"error\":\"bad pin\"}");
+  }
+}
+
+// =====================
+// Proxies NORA's fleet roster (GET /robots on port 5000) so NIKA's own
+// dashboard can show her and any siblings without the browser needing to
+// reach NORA directly.
+// === HER FLEET LIST (:5000) ===
+// While NIKA hosts her own AP (she's alone) she's 192.168.4.1, and anything that joins her for
+// direct control can register there: /ping, /register and /robots, the same wire format as NORA's
+// fleetServer and RIFT's registry. Tiny, so it stays even though she's the lowest on the ladder.
+
+String capsJson(const String& caps) {
+  String j = "[";
+  int from = 0;
+  bool first = true;
+  while (from < (int)caps.length()) {
+    int comma = caps.indexOf(',', from);
+    if (comma < 0) comma = caps.length();
+    String c = caps.substring(from, comma);
+    c.trim();
+    if (c.length()) { j += (first ? "\"" : ",\"") + jsonEscape(c) + "\""; first = false; }
+    from = comma + 1;
+  }
+  return j + "]";
+}
+
+String fleetListJson() {
+  String j = "{\"authority\":\"NIKA\",\"robots\":[{\"name\":\"NIKA\",\"type\":\"tank\",\"ip\":\"" +
+             currentIP() + "\",\"capabilities\":" + capsJson(MY_CAPS) + "}";
+  unsigned long now = millis();
+  for (int i = 0; i < FLEET_MAX; i++) {
+    FleetEntry& e = fleetEntries[i];
+    if (!e.used) continue;
+    if (now - e.seenMs > FLEET_TTL_MS) { e.used = false; continue; }
+    j += ",{\"name\":\"" + jsonEscape(e.name) + "\",\"type\":\"" + jsonEscape(e.type) + "\",\"ip\":\"" +
+         e.ip.toString() + "\",\"capabilities\":" + capsJson(e.caps) + "}";
+  }
+  return j + "]}";
+}
+
+void setupFleetList() {
+  fleetList.on("/ping", []() { fleetList.send(200, "text/plain", "NIKA alive"); });
+  fleetList.on("/register", HTTP_POST, []() {
+    String name = fleetList.arg("name");
+    if (name.length() == 0) { fleetList.send(400, "text/plain", "missing 'name'"); return; }
+    int slot = -1;
+    for (int i = 0; i < FLEET_MAX; i++) if (fleetEntries[i].used && fleetEntries[i].name == name) slot = i;
+    for (int i = 0; i < FLEET_MAX && slot < 0; i++) if (!fleetEntries[i].used) slot = i;
+    if (slot < 0) { fleetList.send(503, "text/plain", "fleet list full"); return; }
+    FleetEntry& e = fleetEntries[slot];
+    e.used = true;
+    e.name = name;
+    e.type = fleetList.hasArg("type") ? fleetList.arg("type") : "unknown";
+    e.caps = fleetList.arg("capabilities");
+    e.ip = fleetList.client().remoteIP();
+    e.seenMs = millis();
+    fleetList.send(200, "text/plain", "OK");
+  });
+  fleetList.on("/robots", HTTP_GET, []() { fleetList.send(200, "application/json", fleetListJson()); });
+  fleetList.begin();
+}
+
+void handleFleet() {
+  if (!fleetMode) {                                  // she hosts: her own list
+    server.send(200, "application/json", fleetListJson());
+    return;
+  }
+
+  WiFiClient client;
+  if (!client.connect(fleetHost(), 5000)) {
+    server.send(200, "application/json", "{\"authority\":\"unreachable\",\"robots\":[]}");
+    return;
+  }
+
+  client.print(String("GET /robots HTTP/1.1\r\n") +
+               "Host: " + fleetHost().toString() + "\r\n" +
+               "Connection: close\r\n\r\n");
+
+  unsigned long start = millis();
+  while (client.connected() && !client.available() && millis() - start < 2000) {
+    delay(10);
+  }
+
+  String resp;
+  bool inBody = false;
+  while (client.available()) {
+    String line = client.readStringUntil('\n');
+    if (!inBody) {
+      if (line == "\r") inBody = true;   // blank line marks end of HTTP headers
+    } else {
+      resp += line;
+    }
+  }
+  client.stop();
+
+  if (resp.length() == 0) resp = "{\"authority\":\"unreachable\",\"robots\":[]}";
+  server.send(200, "application/json", resp);
+}
+
+// =====================
+void handleCmd() {
+  if (!isController()) { server.send(403, "text/plain", "LOCKED"); return; }
+  // Speed control works regardless of drive mode — both the preset cycle
+  // and the dashboard's direct slider value ("SPEED:75").
+  if (server.hasArg("v")) {
+    String v = server.arg("v");
+    if (v == "SPEEDCYCLE" || v.startsWith("SPEED:")) {
+      Serial.println(v);
+      server.send(200, "text/plain", "OK");
+      return;
+    }
+  }
+  if (currentMode == "obstacle") {
+    server.send(200, "text/plain", "IGNORED");
+    return;
+  }
+  if (server.hasArg("v")) {
+    lastCommand = server.arg("v");
+    Serial.println(lastCommand);
+    server.send(200, "text/plain", "OK");
+  } else {
+    server.send(400, "text/plain", "ERR");
+  }
+}
+
+// GET /scan: a fresh look on demand, for whoever drives her by stop-look-think-move.
+// The UNO stops the tracks, sweeps the sensor left / ahead / right and answers
+// SCAN:<l>,<f>,<r>; this waits for it (about 1.5 s) and returns
+// {"ok":true,"left":cm,"front":cm,"right":cm} (999 = no echo). It only looks:
+// no PIN needed while she's standing still, since only the servo turns. While she
+// moves, the scan would stop her, so then only the unlocked controller may scan.
+// Obstacle mode sweeps and drives on its own: 409. The result also stays in /status.
+const unsigned long SCAN_WAIT_MS = 3000;
+
+void handleScan() {
+  bool moving = lastMotorL != 0 || lastMotorR != 0;
+  if (moving && !isController()) {
+    server.send(403, "application/json", "{\"ok\":false,\"error\":\"she's moving: only the unlocked controller can stop her to look\"}");
+    return;
+  }
+  if (currentMode == "obstacle") {
+    server.send(409, "application/json", "{\"ok\":false,\"error\":\"obstacle mode: she's looking and driving on her own\"}");
+    return;
+  }
+  unsigned long asked = millis();
+  scanBusy = false;
+  Serial.println("SCAN");
+  lastCommand = "STOP";               // the UNO stops the tracks before it looks
+  while (millis() - asked < SCAN_WAIT_MS && !scanBusy && !(scanAtMs != 0 && scanAtMs >= asked)) {
+    while (Serial.available()) readArduinoLine();
+    delay(5);
+  }
+  if (scanBusy) {
+    server.send(409, "application/json", "{\"ok\":false,\"error\":\"obstacle mode: she's looking and driving on her own\"}");
+  } else if (scanAtMs != 0 && scanAtMs >= asked) {
+    server.send(200, "application/json", "{\"ok\":true,\"left\":" + String(scanL) + ",\"front\":" + String(scanF) +
+                                         ",\"right\":" + String(scanR) + ",\"no_echo\":999}");
+  } else {
+    server.send(504, "application/json", "{\"ok\":false,\"error\":\"no answer from the UNO (is it running firmware with SCAN?)\"}");
+  }
+}
+
+void handleMode() {
+  if (!isController()) { server.send(403, "text/plain", "LOCKED"); return; }
+  if (server.hasArg("v")) {
+    currentMode = server.arg("v");
+    if      (currentMode == "obstacle") Serial.println("OBSTACLE");
+    else if (currentMode == "tank")     Serial.println("TANK");
+    else                                Serial.println("WASD");
+    server.send(200, "text/plain", "OK");
+  } else {
+    server.send(400, "text/plain", "ERR");
+  }
+}
+
+void handleStatus() {
+  lastStatusPollMs = millis();
+
+  String json = "{";
+  json += "\"mode\":\""  + currentMode       + "\",";
+  json += "\"cmd\":\""   + lastCommand        + "\",";
+  json += "\"dist\":"    + String(lastDist)   + ",";
+  json += "\"left\":\""  + lastLeft           + "\",";
+  json += "\"right\":\"" + lastRight          + "\",";
+  json += "\"turn\":\""  + lastTurn           + "\",";
+  json += "\"ir\":\""    + lastIR             + "\",";
+  json += "\"thought\":\"" + lastThought       + "\",";
+  json += "\"hz\":"      + String(lastHz)          + ",";
+  json += "\"ird\":"     + String(lastIrd)         + ",";
+  json += "\"ip\":\""    + currentIP()             + "\",";
+  json += "\"fleet\":"   + String(fleetMode ? 1 : 0) + ",";
+  json += "\"speed\":"   + String(lastSpeed) + ",";
+  json += "\"guard\":"   + String(lastGuard ? 1 : 0) + ",";
+  json += "\"ml\":"      + String(lastMotorL) + ",";
+  json += "\"mr\":"      + String(lastMotorR) + ",";
+  json += "\"scan_l\":"  + String(scanL) + ",";       // the last /scan, cm (999 no echo, -1 never)
+  json += "\"scan_f\":"  + String(scanF) + ",";
+  json += "\"scan_r\":"  + String(scanR) + ",";
+  json += "\"scan_ms\":" + String(scanAtMs ? (long)(millis() - scanAtMs) : -1L);   // how old it is
+  json += "}";
+  server.send(200, "application/json", json);
+}
+
+// =====================
+void handleRoot() {
+  String html = R"rawhtml(
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NIKA</title>
+<link rel="icon" href="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCAAgACADASIAAhEBAxEB/8QAGQAAAgMBAAAAAAAAAAAAAAAABQcDBAYI/8QAKhAAAgIBAwQCAQMFAAAAAAAAAQIDBBEFITEABhJBE1EiB3HBFEJhgaH/xAAXAQADAQAAAAAAAAAAAAAAAAADBQYE/8QAJBEAAQMDAwQDAAAAAAAAAAAAAQIDEQAhMQQFQVGBkfASEyL/2gAMAwEAAhEDEQA/AOaqcDWbUcCnHmwGcZxvzj31r+39Xp6LbSpBpkF5XZomjkrI8vy5wPzyQf8AgHH31mNIVh/VWA/h8Fdm8s8ZIX+ejXZ08E2qVa0l1a4iRmgisSFkFhhu2RuBsDj76oGbQeaQa5sPApVdIyPe3uWBqfbOma5Qhqah21L29qtwMdPuJCEhkkAJEbgHG+Dzg8Ecbpy5Wmp25athDHNE5R1Pojp3dy3e76PZlnS9Ul0m85lhs14EdTLHErZZ18T+WGxud8En/AW36rDy71t2VgaGK0qTxq3Piw4z7xuPvbfouqQI+QEUn2F15DqmlqBSZIgki0Ym9wcYBBjNUu1rNGOvqVa25jksQBYmxsSDnBProHp919N1IXK0azIjYZSvI/f1xz0Qijo6hpsMcNV68wf8rDPkcHxGPR2z/o4+uqDM7VY2swMc5VJIwAW33znY/uOgGQkCqBCU/Ys9cg+LeKYJ7uOtQValR70Vj5UimhlRfD4gwcJ5g53cJyOPfrqX9dNNsU9Xq2DEhqSxIkMo/FiyqPJWX0cnkjJAHO3WE0aRamrRyGxM1dyvzSGPx8GP9p+j01u900q/2dHWs3Z/mhi+Ws3iGRWwCsYPIXDOf42z1pu60ZzU/qkjRbgwtA/JkG3WL9o54r//2Q==">
+<style>
+  :root {
+    --bg:      #0a0a0f;
+    --panel:   #12121a;
+    --border:  #1e1e2e;
+    --accent:  #00d4ff;
+    --accent2: #7c3aed;
+    --red:     #ff4444;
+    --green:   #00ff88;
+    --text:    #e0e0f0;
+    --sub:     #666688;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Courier New', monospace;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  header {
+    width: 100%;
+    padding: 16px 24px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .logo-ring img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; display: block; }
+  .logo-ring {
+    width: 40px; height: 40px; overflow: hidden;
+    border-radius: 50%;
+    border: 2px solid var(--accent);
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 0 14px var(--accent);
+    font-size: 18px; font-weight: bold; color: var(--accent);
+  }
+  .logo-text h1 { font-size: 1.2rem; letter-spacing: 5px; color: var(--accent); }
+  .logo-text p  { font-size: 0.6rem; color: var(--sub); letter-spacing: 2px; margin-top: 2px; }
+  .conn-dot {
+    margin-left: auto;
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 8px var(--green);
+  }
+
+  .statusbar {
+    width: 100%; max-width: 860px;
+    display: flex; gap: 10px; flex-wrap: wrap;
+    padding: 14px 16px;
+  }
+  .stat {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    flex: 1; min-width: 100px;
+  }
+  .stat-label { font-size: 0.55rem; color: var(--sub); letter-spacing: 2px; margin-bottom: 4px; }
+  .stat-value { font-size: 1rem; color: var(--accent); }
+
+  main {
+    width: 100%; max-width: 860px;
+    padding: 0 16px 40px;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .mode-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .mode-btn {
+    flex: 1;
+    padding: 12px 8px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--sub);
+    font-family: 'Courier New', monospace;
+    font-size: 0.7rem; letter-spacing: 2px;
+    cursor: pointer; transition: all 0.2s;
+  }
+  .keys-link { display: inline-block; text-decoration: none; margin-top: 6px; }
+  .mode-btn.active {
+    border-color: var(--accent); color: var(--accent);
+    box-shadow: 0 0 10px rgba(0,212,255,0.15);
+  }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    display: none;
+  }
+  .panel.active { display: block; }
+  .panel-title {
+    font-size: 0.6rem; letter-spacing: 3px;
+    color: var(--sub); margin-bottom: 18px;
+  }
+
+  /* DPAD */
+  .dpad {
+    display: grid;
+    grid-template-columns: repeat(3, 72px);
+    grid-template-rows: repeat(3, 72px);
+    gap: 6px;
+    margin: 0 auto; width: fit-content;
+  }
+  .dpad-btn {
+    width: 72px; height: 72px;
+    background: #1a1a28;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--text); font-size: 1.5rem;
+    cursor: pointer; transition: all 0.1s;
+    display: flex; align-items: center; justify-content: center;
+    user-select: none; -webkit-tap-highlight-color: transparent;
+    touch-action: none;
+  }
+  .dpad-btn:active, .dpad-btn.pressed {
+    background: var(--accent2);
+    border-color: var(--accent);
+    box-shadow: 0 0 14px rgba(0,212,255,0.3);
+    transform: scale(0.92);
+  }
+  .dpad-btn.empty { visibility: hidden; pointer-events: none; }
+  .dpad-stop {
+    background: #2a1a1a; border-color: #4a2020;
+    font-size: 0.65rem; letter-spacing: 1px; color: var(--red);
+  }
+
+  /* DUAL */
+  .dual { display: flex; gap: 24px; justify-content: center; flex-wrap: wrap; }
+  .stick-group { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .stick-label { font-size: 0.6rem; letter-spacing: 2px; color: var(--sub); }
+  .stick-col { display: flex; flex-direction: column; gap: 6px; align-items: center; }
+  .stick-btn {
+    width: 72px; height: 72px;
+    background: #1a1a28;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--text); font-size: 1.5rem;
+    cursor: pointer; transition: all 0.1s;
+    display: flex; align-items: center; justify-content: center;
+    user-select: none; -webkit-tap-highlight-color: transparent;
+    touch-action: none;
+  }
+  .stick-btn:active, .stick-btn.pressed {
+    background: var(--accent2); border-color: var(--accent);
+    box-shadow: 0 0 14px rgba(0,212,255,0.3);
+    transform: scale(0.92);
+  }
+
+  /* OBSTACLE */
+  .obs-wrap { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+  .scan-arc { width: 220px; height: 120px; }
+  .scan-arc svg { width: 100%; height: 100%; }
+  .obs-readings { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .obs-stat {
+    background: #0e0e1a; border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 16px; text-align: center; min-width: 90px;
+  }
+  .obs-stat-label { font-size: 0.55rem; color: var(--sub); letter-spacing: 2px; }
+  .obs-stat-val   { font-size: 1.2rem; color: var(--accent); margin-top: 3px; }
+  .turn-ind {
+    font-size: 0.7rem; letter-spacing: 2px;
+    padding: 8px 20px; border-radius: 6px;
+    border: 1px solid var(--border); color: var(--sub);
+  }
+  .turn-ind.left  { border-color: var(--accent);  color: var(--accent);  }
+  .turn-ind.right { border-color: var(--accent2); color: var(--accent2); }
+
+  footer {
+    font-size: 0.55rem; color: var(--sub);
+    letter-spacing: 2px; padding: 16px; text-align: center;
+  }
+
+  /* SPEED */
+  .speed-row { display: flex; align-items: center; gap: 12px; }
+  .speed-row span { font-size: 0.6rem; color: var(--sub); letter-spacing: 2px; }
+  .speed-row input[type=range] { flex: 1; accent-color: var(--accent); }
+  #speedVal { color: var(--accent); font-size: 0.75rem; min-width: 34px; text-align: right; }
+
+  /* GUARD BANNER */
+  .guard-banner {
+    display: none;
+    width: 100%; max-width: 860px;
+    margin: 0 16px 4px;
+    background: #2a1010; border: 1px solid var(--red); color: var(--red);
+    text-align: center; padding: 8px; font-size: 0.65rem; letter-spacing: 2px;
+    border-radius: 8px;
+  }
+
+  /* TELEMETRY HISTORY */
+  #histChart { width: 100%; height: 110px; display: block; background: #0e0e1a; border-radius: 6px; }
+  .hist-legend { display: flex; gap: 14px; justify-content: center; font-size: 0.55rem; margin-top: 8px; }
+</style>
+</head>
+<body>
+
+<div id="lockOverlay" style="position:fixed;inset:0;background:rgba(5,8,16,0.96);z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;font-family:'Courier New',monospace;color:#00d4ff">
+  <div style="font-size:1.4rem;letter-spacing:3px">&#128274; NIKA LOCKED</div>
+  <div style="opacity:0.7;font-size:0.85rem">Enter controller PIN to drive</div>
+  <input id="pinInput" type="password" inputmode="numeric" maxlength="12" placeholder="PIN"
+         style="font-size:1.4rem;text-align:center;padding:10px 16px;width:160px;background:#0b1020;border:1px solid #00d4ff;color:#00d4ff;border-radius:8px;letter-spacing:6px">
+  <button id="pinBtn" style="font-size:1rem;padding:10px 24px;background:#00d4ff;color:#041018;border:0;border-radius:8px;cursor:pointer">UNLOCK</button>
+  <div id="pinMsg" style="color:#ff4444;font-size:0.8rem;min-height:1em"></div>
+</div>
+
+<header>
+  <div class="logo-ring"><img id="face" src="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAA4ADgDASIAAhEBAxEB/8QAGgAAAgMBAQAAAAAAAAAAAAAAAAQFBgcCA//EADEQAAIBAwMDAwEIAQUAAAAAAAECAwAEEQUSIRMxQQZRYYEUIjJxkaGxwRUWQlKC0f/EABkBAAMBAQEAAAAAAAAAAAAAAAMEBQIBBv/EACcRAAEEAQMDAwUAAAAAAAAAAAEAAgMRIRIxQQQFIhNxoVFhscHw/9oADAMBAAIRAxEAPwDHq9ba2lu51hhQs5/b5PxXlUrYxollK8rbYZUKsB+JyDnA+Bin2izSUlfobYT9l/j9M2JfaZIzsSGnmXcpPsuDwP3/AIqyNbem2YI2n27rtBBjQoW+OD+5NUrbqD6bHdgNHAH6cMhfKo2M4JJyDjtU/wCmNAjv4IZbm9mTdgkRkMCnbHPbnyKYYRtSk9VCCDIZCK3olPar6CimsTc6N1BOoLtbSHII74Vv+QHg96z8ggkEEEdwa1PUNFu/SVxDqFtdGXThKBKSMSID2Ofbx9arPrOwhMy6raKvRuWJYqMYJ5wR75zyO49iDnMsYGQh9s65ziGOfra7Y/fkH9cqpUUUUuryKdvE6NrbCRXCiMMw98nt/dJYJ4UZJ7CpnX4GiuYzG4dEAQAcj349uaIwYJQJHebW+6Wjto7i8ggtDIkLbGkHfaSDn6e351ZbqXU7KTbaxGFGjzFMJAiY9hwcn4NUmKSXqjayxFio37sFcHg1pfprVrizHSuJlYE4YgZUH35okdHCW6vUxuoAOrgri99Rax/o5xqVv12nZomkePbsXbkkgEc88e/0qN1K8ju/QtlIpKTIGWZQM7wScfuc/HIqW1XUY5JdV+139jNZLbs/2ZfvNI2ML8AgnuKVisFHpe7QRmSLpK02zuv3SSwz3wQDj86I4EgqWBHHpdp0+QONsjbPv+Fn1FdOu1sAgg8gjyPFFJr0i6t5BFcRuc7QwJx3xU/rdxa31pFcQsSAgWTPgjjP14qJtdKurzHSUHgnk4wB5PsPzpF3aKRopy2CSrAHG3HHftRGkt35S742ySAg5avFwrM7pyMmpfS/UctmiwzRmWIcDaeQKUMCLHHNA24D8fYkDH8fNLhwiSKBkkbcgd64LabRiGvFEWrNqGqWOqW9pb2q3US9TqTmVspjxtHirfBYT33pApbljqcZUhUIV0xkbk5GTtPb+6zTTZo+n05AdpBU/Xsf1FaTomq3KwQw3EXXQnpxg8NFIFAGG8Bue/GSPmmYzqGVB7pG+NrfT4N5/vhZve9dbp1uDmRTgnbjP0wKKl/VdoY9Ue4VmcOAJSyFHV/O9T2J/QnP5UUq4UaVrp5BJE1wURY3d0xMay7RKwyGHBP+0nx7163CobKbqkiZG+8rHO2Qd/of/KKK2D4rjgBJhKC3mt4BcKskee5IwAPHI/uuobhy+65jSaPG0s4HH/YfzRRWSKOFoHWMrmMSJcC7MB+z724A4A8/pWgaDqcYsJJ0Me7K5DLuUjwSO47dxRRRoTRpIdxjbJHn618pf1Dq32rTbi1uIQZdxkSVwNyoU3D7w/EAwwD5BooooUptyN22NrIvHlf/2Q==" alt="M"></div>
+  <div class="logo-text">
+    <h1>M I L A</h1>
+    <p>MINIATURE INTEGRATED LOGIC AUTOMATON</p>
+    <a class="mode-btn keys-link" href="/keys" target="nika_keys">KEYS</a>
+  </div>
+  <div class="conn-dot" id="connDot"></div>
+</header>
+
+<div class="guard-banner" id="guardBanner">⚠ COLLISION GUARD — OBSTACLE TOO CLOSE, STOPPED</div>
+
+<div class="statusbar">
+  <div class="stat">
+    <div class="stat-label">MODE</div>
+    <div class="stat-value" id="s-mode">WASD</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">FRONT CM</div>
+    <div class="stat-value" id="s-dist">---</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">LEFT CM</div>
+    <div class="stat-value" id="s-left">---</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">RIGHT CM</div>
+    <div class="stat-value" id="s-right">---</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">LAST CMD</div>
+    <div class="stat-value" id="s-cmd">---</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">LAST IR</div>
+    <div class="stat-value" id="s-ir">---</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">THINKS</div>
+    <div class="stat-value" id="s-temp">---</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">HZ</div>
+    <div class="stat-value" id="s-hum">---</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">SPEED</div>
+    <div class="stat-value" id="s-speed">100%</div>
+  </div>
+</div>
+
+<main>
+  <div class="panel active">
+    <div class="panel-title">◈ TELEMETRY — LAST ~24s</div>
+    <canvas id="histChart" width="820" height="110"></canvas>
+    <div class="hist-legend">
+      <span style="color:#00d4ff;">■ FRONT CM</span>
+      <span style="color:#ff8800;">■ THOUGHT HZ</span>
+      <span style="color:#7c3aed;">■ IR SENSOR</span>
+    </div>
+  </div>
+
+  <div class="mode-row">
+    <button class="mode-btn active" id="btn-wasd"     onclick="setMode('wasd')">🎮 WASD</button>
+    <button class="mode-btn"        id="btn-tank"     onclick="setMode('tank')">🕹 TANK</button>
+    <button class="mode-btn"        id="btn-obstacle" onclick="setMode('obstacle')">⚡ OBSTACLE</button>
+  </div>
+
+  <div class="speed-row">
+    <span>SPEED</span>
+    <input type="range" id="speedSlider" min="25" max="100" step="25" value="100" oninput="setSpeed(this.value)">
+    <span id="speedVal">100%</span>
+  </div>
+
+  <!-- OBSTACLE -->
+  <div class="panel" id="panel-obstacle">
+    <div class="panel-title">◈ AUTONOMOUS OBSTACLE AVOIDANCE</div>
+    <div class="obs-wrap">
+      <div class="scan-arc">
+        <svg viewBox="0 0 220 120" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <radialGradient id="ag" cx="50%" cy="100%" r="55%">
+              <stop offset="0%"   stop-color="#00d4ff" stop-opacity="0.12"/>
+              <stop offset="100%" stop-color="#00d4ff" stop-opacity="0"/>
+            </radialGradient>
+          </defs>
+          <path d="M10,115 A100,100 0 0,1 210,115" fill="url(#ag)" stroke="#1e1e2e" stroke-width="1"/>
+          <path d="M35,115 A75,75 0 0,1 185,115"   fill="none" stroke="#1e1e2e" stroke-width="1" stroke-dasharray="4,4"/>
+          <path d="M60,115 A50,50 0 0,1 160,115"   fill="none" stroke="#1e1e2e" stroke-width="1" stroke-dasharray="2,4"/>
+          <line x1="110" y1="115" x2="10"  y2="115" stroke="#1e1e2e" stroke-width="1"/>
+          <line x1="110" y1="115" x2="210" y2="115" stroke="#1e1e2e" stroke-width="1"/>
+          <line id="scanLine" x1="110" y1="115" x2="110" y2="15" stroke="#00d4ff" stroke-width="2" opacity="0.85"/>
+          <circle cx="110" cy="115" r="4" fill="#00d4ff" opacity="0.8"/>
+          <circle id="obsDot" cx="110" cy="50" r="5" fill="#ff4444" opacity="0"/>
+        </svg>
+      </div>
+      <div class="obs-readings">
+        <div class="obs-stat">
+          <div class="obs-stat-label">◄ LEFT</div>
+          <div class="obs-stat-val" id="obs-left">---</div>
+        </div>
+        <div class="obs-stat">
+          <div class="obs-stat-label">▲ FRONT</div>
+          <div class="obs-stat-val" id="obs-front">---</div>
+        </div>
+        <div class="obs-stat">
+          <div class="obs-stat-label">RIGHT ►</div>
+          <div class="obs-stat-val" id="obs-right">---</div>
+        </div>
+      </div>
+      <div class="turn-ind" id="obs-turn">SCANNING...</div>
+    </div>
+  </div>
+
+  <!-- WASD -->
+  <div class="panel active" id="panel-wasd">
+    <div class="panel-title">◈ WASD — KEYBOARD / TOUCH</div>
+    <div class="dpad">
+      <div class="dpad-btn empty"></div>
+      <div class="dpad-btn" id="btn-w" ontouchstart="ev(event,'FORWARD')"  ontouchend="ev(event,'STOP')" onmousedown="ev(event,'FORWARD')"  onmouseup="ev(event,'STOP')">▲</div>
+      <div class="dpad-btn empty"></div>
+      <div class="dpad-btn" id="btn-a" ontouchstart="ev(event,'LEFT')"     ontouchend="ev(event,'STOP')" onmousedown="ev(event,'LEFT')"     onmouseup="ev(event,'STOP')">◄</div>
+      <div class="dpad-btn dpad-stop"  ontouchstart="ev(event,'STOP')"     ontouchend="ev(event,'STOP')" onmousedown="ev(event,'STOP')"     onmouseup="ev(event,'STOP')">STOP</div>
+      <div class="dpad-btn" id="btn-d" ontouchstart="ev(event,'RIGHT')"    ontouchend="ev(event,'STOP')" onmousedown="ev(event,'RIGHT')"    onmouseup="ev(event,'STOP')">►</div>
+      <div class="dpad-btn empty"></div>
+      <div class="dpad-btn" id="btn-s" ontouchstart="ev(event,'BACKWARD')" ontouchend="ev(event,'STOP')" onmousedown="ev(event,'BACKWARD')" onmouseup="ev(event,'STOP')">▼</div>
+      <div class="dpad-btn empty"></div>
+    </div>
+  </div>
+
+  <!-- TANK -->
+  <div class="panel" id="panel-tank">
+    <div class="panel-title">◈ TANK — INDEPENDENT TRACK CONTROL (Q/A left, E/D right)</div>
+    <div class="dual">
+      <div class="stick-group">
+        <div class="stick-label">◈ LEFT MOTOR</div>
+        <div class="stick-col">
+          <div class="stick-btn" id="btn-lf" ontouchstart="ev(event,'L_FWD')" ontouchend="ev(event,'STOP')" onmousedown="ev(event,'L_FWD')" onmouseup="ev(event,'STOP')">▲</div>
+          <div class="stick-btn" id="btn-lb" ontouchstart="ev(event,'L_BWD')" ontouchend="ev(event,'STOP')" onmousedown="ev(event,'L_BWD')" onmouseup="ev(event,'STOP')">▼</div>
+        </div>
+      </div>
+      <div class="stick-group">
+        <div class="stick-label">◈ RIGHT MOTOR</div>
+        <div class="stick-col">
+          <div class="stick-btn" id="btn-rf" ontouchstart="ev(event,'R_FWD')" ontouchend="ev(event,'STOP')" onmousedown="ev(event,'R_FWD')" onmouseup="ev(event,'STOP')">▲</div>
+          <div class="stick-btn" id="btn-rb" ontouchstart="ev(event,'R_BWD')" ontouchend="ev(event,'STOP')" onmousedown="ev(event,'R_BWD')" onmouseup="ev(event,'STOP')">▼</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FLEET -->
+  <div class="panel" id="panel-fleet-wrap" style="display:block; padding:0;">
+    <div id="fleetPanel" style="display:none;" class="panel active">
+      <div class="panel-title">◈ FLEET</div>
+      <div id="fleetAuthority" style="font-size:0.8rem; color:var(--accent); margin-bottom:8px;">---</div>
+      <div id="fleetList" style="font-size:0.75rem; color:var(--sub);"></div>
+    </div>
+  </div>
+</main>
+
+<footer>NIKA v1.0 &nbsp;|&nbsp; <span id="ipAddr">192.168.4.1</span>:5013 &nbsp;|&nbsp; <span id="uptime">--:--</span></footer>
+
+<script>
+  // --- Control lock: PIN unlock before driving ---
+  let unlocked = false;
+  function doUnlock() {
+    const pin = document.getElementById('pinInput').value;
+    fetch('/unlock?pw=' + encodeURIComponent(pin))
+      .then(r => { if (!r.ok) throw new Error('bad'); return r.json(); })
+      .then(() => {
+        unlocked = true;
+        document.getElementById('lockOverlay').style.display = 'none';
+        document.getElementById('pinMsg').textContent = '';
+      })
+      .catch(() => { document.getElementById('pinMsg').textContent = 'Wrong PIN'; });
+  }
+  function showLock() {
+    unlocked = false;
+    const ov = document.getElementById('lockOverlay');
+    if (ov) ov.style.display = 'flex';
+  }
+  document.getElementById('pinBtn').addEventListener('click', doUnlock);
+  document.getElementById('pinInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') doUnlock();
+  });
+
+  let mode = 'wasd';
+  let scanAngle = 90, scanDir = 1;
+  let startTime = Date.now();
+  let connected = true;
+
+  // Scan line animation
+  setInterval(() => {
+    scanAngle += scanDir * 2.5;
+    if (scanAngle >= 150 || scanAngle <= 30) scanDir *= -1;
+    const rad = (180 - scanAngle) * Math.PI / 180;
+    const x2 = 110 + 100 * Math.cos(rad);
+    const y2 = 115 - 100 * Math.sin(rad);
+    const el = document.getElementById('scanLine');
+    if (el) { el.setAttribute('x2', x2); el.setAttribute('y2', y2); }
+  }, 35);
+
+  // Uptime counter
+  setInterval(() => {
+    const s = Math.floor((Date.now() - startTime) / 1000);
+    const m = Math.floor(s / 60);
+    document.getElementById('uptime').textContent =
+      String(m).padStart(2,'0') + ':' + String(s % 60).padStart(2,'0');
+  }, 1000);
+
+  // Wrap fetch for driving endpoints: a 403 means the server locked us out,
+  // so pop the PIN overlay back up.
+  function driveFetch(url) {
+    return fetch(url).then(r => { if (r.status === 403) showLock(); return r; })
+                     .catch(() => {});
+  }
+
+  function setMode(m) {
+    mode = m;
+    driveFetch('/mode?v=' + m);
+    ['wasd','tank','obstacle'].forEach(x => {
+      document.getElementById('btn-'   + x).classList.toggle('active', x === m);
+      document.getElementById('panel-' + x).classList.toggle('active', x === m);
+    });
+    document.getElementById('s-mode').textContent = m.toUpperCase();
+  }
+
+  function ev(e, cmd) {
+    e.preventDefault();
+    if (mode === 'obstacle') return;
+    sendCmd(cmd);
+    // Visual feedback
+    const el = e.currentTarget;
+    if (cmd === 'STOP') {
+      document.querySelectorAll('.dpad-btn, .stick-btn').forEach(b => b.classList.remove('pressed'));
+    } else {
+      el.classList.add('pressed');
+    }
+  }
+
+  function sendCmd(cmd) {
+    driveFetch('/cmd?v=' + cmd);
+    document.getElementById('s-cmd').textContent = cmd;
+  }
+
+  // Keyboard — WASD mode drives like a d-pad, TANK mode drives each track
+  // independently (Q/A = left track fwd/back, E/D = right track fwd/back).
+  const wasdKeyMap = { w:'FORWARD', s:'BACKWARD', a:'LEFT', d:'RIGHT' };
+  const tankKeyMap = { q:'L_FWD', a:'L_BWD', e:'R_FWD', d:'R_BWD' };
+  const held = {};
+  document.addEventListener('keydown', e => {
+    if (held[e.key] || mode === 'obstacle') return;
+    held[e.key] = true;
+    const k = e.key.toLowerCase();
+    const cmd = mode === 'tank' ? tankKeyMap[k] : wasdKeyMap[k];
+    if (cmd) sendCmd(cmd);
+  });
+  document.addEventListener('keyup', e => {
+    held[e.key] = false;
+    const k = e.key.toLowerCase();
+    const cmd = mode === 'tank' ? tankKeyMap[k] : wasdKeyMap[k];
+    if (cmd) sendCmd('STOP');
+  });
+
+  // X cycles speed presets (100/75/50/25), same button the IR remote's
+  // OK key now triggers — mirrors it here for keyboard/touch parity.
+  document.addEventListener('keydown', e => {
+    if (e.key.toLowerCase() === 'x') driveFetch('/cmd?v=SPEEDCYCLE');
+  });
+
+  // Speed slider — sends an explicit value rather than stepping presets.
+  function setSpeed(v) {
+    document.getElementById('speedVal').textContent = v + '%';
+    driveFetch('/cmd?v=SPEED:' + v);
+  }
+
+  // Telemetry history — a rolling buffer of the last ~24s (60 samples at
+  // the 400ms poll interval), drawn as a plain canvas sparkline. Kept
+  // entirely client-side since /status already carries everything needed.
+  const HIST_LEN = 60;
+  const distHist = [], tempHist = [], humHist = [];
+  function pushHist(arr, val, max) {
+    arr.push(Math.max(0, Math.min(max, isNaN(val) ? 0 : val)));
+    if (arr.length > HIST_LEN) arr.shift();
+  }
+  function drawHistory() {
+    const canvas = document.getElementById('histChart');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width, h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+    function line(arr, max, color) {
+      if (arr.length < 2) return;
+      ctx.beginPath();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
+      arr.forEach((v, i) => {
+        const x = (i / (HIST_LEN - 1)) * w;
+        const y = h - (v / max) * h;
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
+    line(distHist, 100, '#00d4ff');
+    line(tempHist, 1000, '#ff8800');   // her thought's frequency
+    line(humHist,  1,    '#7c3aed');   // the IR obstacle sensor
+  }
+
+  // Fleet roster — only relevant once NIKA has joined NORA's network.
+  function pollFleet() {
+    fetch('/fleet').then(r => r.json()).then(f => {
+      const panel = document.getElementById('fleetPanel');
+      if (f.authority === 'none') { panel.style.display = 'none'; return; }
+      panel.style.display = 'block';
+      document.getElementById('fleetAuthority').textContent = 'authority: ' + f.authority;
+      const others = (f.robots || []).filter(r => r.name !== 'NIKA');
+      document.getElementById('fleetList').innerHTML = others.length
+        ? others.map(r => `&bull; ${r.name} (${r.type}) &mdash; ${r.ip}`).join('<br>')
+        : '(no other robots registered)';
+    }).catch(() => {});
+  }
+  setInterval(pollFleet, 3000);
+  pollFleet();
+
+  // Status polling
+  function poll() {
+    fetch('/status')
+      .then(r => r.json())
+      .then(d => {
+        connected = true;
+        document.getElementById('connDot').style.background = '#00ff88';
+        document.getElementById('connDot').style.boxShadow  = '0 0 8px #00ff88';
+
+        document.getElementById('s-dist').textContent  = d.dist + ' cm';
+        document.getElementById('s-left').textContent  = d.left + ' cm';
+        document.getElementById('s-right').textContent = d.right + ' cm';
+        document.getElementById('s-cmd').textContent   = d.cmd;
+        document.getElementById('s-ir').textContent    = d.ir;
+        document.getElementById('s-temp').textContent  = d.thought || '---';
+        document.getElementById('s-hum').textContent   = d.hz + ' Hz' + (d.ird ? '  IR!' : '');
+        document.getElementById('ipAddr').textContent  = d.ip;
+        document.getElementById('s-speed').textContent = d.speed + '%';
+
+        document.getElementById('guardBanner').style.display = (d.guard == 1) ? 'block' : 'none';
+
+        const slider = document.getElementById('speedSlider');
+        if (document.activeElement !== slider) {
+          slider.value = d.speed;
+          document.getElementById('speedVal').textContent = d.speed + '%';
+        }
+
+        pushHist(distHist, parseFloat(d.dist), 100);
+        pushHist(tempHist, parseFloat(d.hz), 1000);
+        pushHist(humHist,  d.ird ? 1 : 0,  1);
+        drawHistory();
+
+        document.getElementById('obs-front').textContent = d.dist + ' cm';
+        document.getElementById('obs-left').textContent  = d.left + ' cm';
+        document.getElementById('obs-right').textContent = d.right + ' cm';
+
+        const ti = document.getElementById('obs-turn');
+        if (d.turn === 'LEFT')  { ti.textContent = '◄ TURNING LEFT';  ti.className = 'turn-ind left';  }
+        else if (d.turn === 'RIGHT') { ti.textContent = 'TURNING RIGHT ►'; ti.className = 'turn-ind right'; }
+        else                    { ti.textContent = '▲ MOVING FORWARD'; ti.className = 'turn-ind'; }
+
+        // Obstacle dot position on arc
+        const dot = document.getElementById('obsDot');
+        const dist = parseFloat(d.dist);
+        if (dist < 100 && dist > 0) {
+          const mapped = Math.max(25, 115 - dist * 0.9);
+          dot.setAttribute('cy', mapped);
+          dot.setAttribute('opacity', '1');
+        } else {
+          dot.setAttribute('opacity', '0');
+        }
+      })
+      .catch(() => {
+        connected = false;
+        document.getElementById('connDot').style.background = '#ff4444';
+        document.getElementById('connDot').style.boxShadow  = '0 0 8px #ff4444';
+      });
+  }
+
+  setInterval(poll, 400);
+  poll();
+</script>
+</body>
+</html>
+)rawhtml";
+
+  server.send(200, "text/html", html);
+}
