@@ -65,6 +65,7 @@ Her thought is heard, seen and acted on:
 - [x] WASD, TANK and OBSTACLE modes, the IR remote, NORA's IR fleet link (address `0x0DA5`), the drive PIN, Brainfuck talk, `SCAN`.
 - [x] The wall guard when you drive her, and ticks faster as a wall gets close.
 - [x] The fleet's WiFi ladder (the very bottom, below MILA), her own `NIKA` AP when she's alone, the dashboard on `:5013`, the imposter radar, ESP-NOW beacons. Everyone makes way for her: like MILA's, her ESP8266 can't hear them.
+- [x] **MIND mode** (from MILA's): the LLM on her PC controller drives her one short move at a time, and her synth brain's thought (and its Hz) is one of the things it senses, so it knows how she feels. **M** on the Python controller, or MIND on her dashboard while it's connected (x86 PC, 8 GB+ RAM, GTX 1050 or better). Her voice: Zira, extra high.
 
 </details>
 
