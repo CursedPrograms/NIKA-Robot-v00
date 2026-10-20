@@ -206,6 +206,12 @@ void playTone(unsigned int freq, unsigned int durMs) {
 
 void beep(unsigned int freq, unsigned int durMs) {
   if (buzzerSilent) return;
+  // she has no speaker of her own to speak of: the WiFi chip passes every note on to whoever
+  // listens (/sound: her web page's Listen, L on the controller), which plays it
+  Serial.print("SND:");
+  Serial.print(freq);
+  Serial.print(",");
+  Serial.println(durMs);
   playTone(freq, durMs);
 }
 

@@ -189,6 +189,21 @@ unsigned long scanAtMs = 0;                  // when it came in (0 = never)
 bool   scanBusy    = false;                  // the UNO answered SCAN:BUSY (obstacle mode)
 bool   lastGuard   = false;   // true while the manual-mode collision guard has force-stopped the robot
 
+// === SOUND ===
+// She has no speaker: her thought (the synth's square wave, lastHz) and every beep the UNO plays
+// (SND:<Hz>,<ms>) go to whoever listens. GET /sound?since=<seq> gives her thought and the beeps
+// after seq, each with when it started on her clock, so the page / controller keep the rhythm.
+const uint8_t SND_N = 48;
+struct Snd { uint32_t seq; uint32_t t; uint16_t hz; uint16_t ms; };
+Snd sndLog[SND_N];
+uint32_t sndSeq = 0;
+
+void addSound(int hz, int ms) {
+  sndSeq++;
+  Snd &s = sndLog[sndSeq % SND_N];
+  s.seq = sndSeq; s.t = millis(); s.hz = hz; s.ms = ms;
+}
+
 // === CONNECTION WATCHDOG ===
 // All clients (web dashboard and the desktop controllers) poll /status every
 // 400ms for as long as they're running, whereas drive commands are only
@@ -286,6 +301,7 @@ void setup() {
   server.on("/scan",   handleScan);
   server.on("/mind",   handleMind);
   server.on("/chirp",  handleChirp);
+  server.on("/sound",  handleSound);
 
   server.begin();
   setupFleetList();                 // :5000, for the robots below her when she hosts
@@ -373,6 +389,10 @@ void readArduinoLine() {
   if (line.startsWith("THOUGHT:")) {                   // THOUGHT:<name>,<Hz> (the synth brain)
     int comma = line.indexOf(',');
     if (comma > 8) { lastThought = line.substring(8, comma); lastHz = line.substring(comma + 1).toInt(); }
+  }
+  if (line.startsWith("SND:")) {                       // SND:<Hz>,<ms>: a beep, for /sound
+    int comma = line.indexOf(',');
+    if (comma > 4) addSound(line.substring(4, comma).toInt(), line.substring(comma + 1).toInt());
   }
   if (line.startsWith("IRD:"))   lastIrd      = line.substring(4).toInt();
   if (line.startsWith("SPEED:")) lastSpeed    = line.substring(6).toInt();
@@ -718,6 +738,23 @@ void handleStatus() {
   server.send(200, "application/json", json);
 }
 
+void handleSound() {
+  uint32_t since = server.arg("since").toInt();
+  String json = "{\"seq\":" + String(sndSeq) + ",\"now\":" + String(millis()) +
+                ",\"hz\":" + String(lastHz) + ",\"thought\":\"" + lastThought + "\",\"beeps\":[";
+  bool first = true;
+  uint32_t oldest = sndSeq > SND_N ? sndSeq - SND_N + 1 : 1;
+  for (uint32_t q = max(since + 1, oldest); q <= sndSeq; q++) {
+    const Snd &s = sndLog[q % SND_N];
+    if (!first) json += ",";
+    json += "[" + String(s.seq) + "," + String(s.t) + "," + String(s.hz) + "," + String(s.ms) + "]";
+    first = false;
+  }
+  json += "]}";
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.send(200, "application/json", json);
+}
+
 // =====================
 void handleRoot() {
   String html = R"rawhtml(
@@ -727,7 +764,7 @@ void handleRoot() {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NIKA</title>
-<link rel="icon" href="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCAAgACADASIAAhEBAxEB/8QAGQAAAgMBAAAAAAAAAAAAAAAABQcDBAYI/8QAKhAAAgIBAwQCAQMFAAAAAAAAAQIDBBEFITEABhJBE1EiB3HBFEJhgaH/xAAXAQADAQAAAAAAAAAAAAAAAAADBQYE/8QAJBEAAQMDAwQDAAAAAAAAAAAAAQIDEQAhMQQFQVGBkfASEyL/2gAMAwEAAhEDEQA/AOaqcDWbUcCnHmwGcZxvzj31r+39Xp6LbSpBpkF5XZomjkrI8vy5wPzyQf8AgHH31mNIVh/VWA/h8Fdm8s8ZIX+ejXZ08E2qVa0l1a4iRmgisSFkFhhu2RuBsDj76oGbQeaQa5sPApVdIyPe3uWBqfbOma5Qhqah21L29qtwMdPuJCEhkkAJEbgHG+Dzg8Ecbpy5Wmp25athDHNE5R1Pojp3dy3e76PZlnS9Ul0m85lhs14EdTLHErZZ18T+WGxud8En/AW36rDy71t2VgaGK0qTxq3Piw4z7xuPvbfouqQI+QEUn2F15DqmlqBSZIgki0Ym9wcYBBjNUu1rNGOvqVa25jksQBYmxsSDnBProHp919N1IXK0azIjYZSvI/f1xz0Qijo6hpsMcNV68wf8rDPkcHxGPR2z/o4+uqDM7VY2swMc5VJIwAW33znY/uOgGQkCqBCU/Ys9cg+LeKYJ7uOtQValR70Vj5UimhlRfD4gwcJ5g53cJyOPfrqX9dNNsU9Xq2DEhqSxIkMo/FiyqPJWX0cnkjJAHO3WE0aRamrRyGxM1dyvzSGPx8GP9p+j01u900q/2dHWs3Z/mhi+Ws3iGRWwCsYPIXDOf42z1pu60ZzU/qkjRbgwtA/JkG3WL9o54r//2Q==">
+<link rel="icon" href="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAAgACADASIAAhEBAxEB/8QAGAABAQEBAQAAAAAAAAAAAAAABgcEBQP/xAAuEAABAwIFAwIEBwAAAAAAAAABAgMEBREABhITITFBUSJhBxSRsRUjMjNCUtH/xAAXAQADAQAAAAAAAAAAAAAAAAACAwQF/8QAJBEAAgEDAwMFAAAAAAAAAAAAAQIRAAMhBDFRcYHwEkGhsdH/2gAMAwEAAhEDEQA/AMS0aSUggn25wVzVmAxpP4dTlnf0/mu6b6bj+PvbnCrPUt+nZYkKiJYjulaG9wGx5PY9jiQ01wyJ7rbiESnZzRQlZUQUK6hVz39PPseuCzJaabp0VgJHnkUjhSMys/MLi6qjFjC7yhZwISBcm4PPFzxhlRZLdYpnz0W4Z6K1caT4/wAx5T2ablv4fol0ZyU3JqcTZbcSdSVrVbUm3TUf0+w5GM/wngKfy5I3UIbSHdKTuergf17WvhVq4bgJPsafrbK2YIG4+6X5vgw001bTkht+TMQdLK7FCQLG97cffxgKWWYFTgPBLaJ8dRZS+lrSztnhJUroCPsTjv5vnpi5jqEfcWosIQ0ArlA4uT9VWPjrgvHrDUiG2w8l8qcsgsp1WWg39Vx6bA3HPjEkObh9AwM/tW6dVW0rOckD42HauHm2iT4VWdanrLW6UvBGoKC7m10JTwDwenbvixZDyvIp8NImxo0RkA3cjrJCxzyb+bXHi5xDZdVMeSmHJS26I6y1q2wFFN+modu/0xevhwpdeo6ZT737KjGUncKlBAIKUnseLG+LXJWOKztVcDTC9+M9dz05r//Z">
 <style>
   :root {
     --bg:      #0a0a0f;
@@ -939,11 +976,12 @@ void handleRoot() {
 </div>
 
 <header>
-  <div class="logo-ring"><img id="face" src="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAA4ADgDASIAAhEBAxEB/8QAGgAAAgMBAQAAAAAAAAAAAAAAAAQFBgcCA//EADEQAAIBAwMDAwEIAQUAAAAAAAECAwAEEQUSIRMxQQZRYYEUIjJxkaGxwRUWQlKC0f/EABkBAAMBAQEAAAAAAAAAAAAAAAMEBQIBBv/EACcRAAEEAQMDAwUAAAAAAAAAAAEAAgMRIRIxQQQFIhNxoVFhscHw/9oADAMBAAIRAxEAPwDHq9ba2lu51hhQs5/b5PxXlUrYxollK8rbYZUKsB+JyDnA+Bin2izSUlfobYT9l/j9M2JfaZIzsSGnmXcpPsuDwP3/AIqyNbem2YI2n27rtBBjQoW+OD+5NUrbqD6bHdgNHAH6cMhfKo2M4JJyDjtU/wCmNAjv4IZbm9mTdgkRkMCnbHPbnyKYYRtSk9VCCDIZCK3olPar6CimsTc6N1BOoLtbSHII74Vv+QHg96z8ggkEEEdwa1PUNFu/SVxDqFtdGXThKBKSMSID2Ofbx9arPrOwhMy6raKvRuWJYqMYJ5wR75zyO49iDnMsYGQh9s65ziGOfra7Y/fkH9cqpUUUUuryKdvE6NrbCRXCiMMw98nt/dJYJ4UZJ7CpnX4GiuYzG4dEAQAcj349uaIwYJQJHebW+6Wjto7i8ggtDIkLbGkHfaSDn6e351ZbqXU7KTbaxGFGjzFMJAiY9hwcn4NUmKSXqjayxFio37sFcHg1pfprVrizHSuJlYE4YgZUH35okdHCW6vUxuoAOrgri99Rax/o5xqVv12nZomkePbsXbkkgEc88e/0qN1K8ju/QtlIpKTIGWZQM7wScfuc/HIqW1XUY5JdV+139jNZLbs/2ZfvNI2ML8AgnuKVisFHpe7QRmSLpK02zuv3SSwz3wQDj86I4EgqWBHHpdp0+QONsjbPv+Fn1FdOu1sAgg8gjyPFFJr0i6t5BFcRuc7QwJx3xU/rdxa31pFcQsSAgWTPgjjP14qJtdKurzHSUHgnk4wB5PsPzpF3aKRopy2CSrAHG3HHftRGkt35S742ySAg5avFwrM7pyMmpfS/UctmiwzRmWIcDaeQKUMCLHHNA24D8fYkDH8fNLhwiSKBkkbcgd64LabRiGvFEWrNqGqWOqW9pb2q3US9TqTmVspjxtHirfBYT33pApbljqcZUhUIV0xkbk5GTtPb+6zTTZo+n05AdpBU/Xsf1FaTomq3KwQw3EXXQnpxg8NFIFAGG8Bue/GSPmmYzqGVB7pG+NrfT4N5/vhZve9dbp1uDmRTgnbjP0wKKl/VdoY9Ue4VmcOAJSyFHV/O9T2J/QnP5UUq4UaVrp5BJE1wURY3d0xMay7RKwyGHBP+0nx7163CobKbqkiZG+8rHO2Qd/of/KKK2D4rjgBJhKC3mt4BcKskee5IwAPHI/uuobhy+65jSaPG0s4HH/YfzRRWSKOFoHWMrmMSJcC7MB+z724A4A8/pWgaDqcYsJJ0Me7K5DLuUjwSO47dxRRRoTRpIdxjbJHn618pf1Dq32rTbi1uIQZdxkSVwNyoU3D7w/EAwwD5BooooUptyN22NrIvHlf/2Q==" alt="M"></div>
+  <div class="logo-ring"><img id="face" src="data:image/jpeg;base64,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" alt="N"></div>
   <div class="logo-text">
-    <h1>M I L A</h1>
-    <p>MINIATURE INTEGRATED LOGIC AUTOMATON</p>
+    <h1>N I K A</h1>
+    <p>THE ROBOT THAT THINKS IN SQUARE WAVES</p>
     <a class="mode-btn keys-link" href="/keys" target="nika_keys">KEYS</a>
+    <button class="mode-btn keys-link" id="listenBtn" onclick="listen()" title="she has no speaker: hear her thought and her beeps here (L)">🔊 LISTEN</button>
   </div>
   <div class="conn-dot" id="connDot"></div>
 </header>
@@ -1203,6 +1241,57 @@ void handleRoot() {
     const k = e.key.toLowerCase();
     const cmd = mode === 'tank' ? tankKeyMap[k] : wasdKeyMap[k];
     if (cmd) sendCmd('STOP');
+  });
+
+  // ---- LISTEN: she has no speaker, so her sound plays here (L) ----
+  // /sound gives her thought (the synth's square wave) and the beeps since the last poll, each
+  // stamped with her clock (ms); they're scheduled on the page's audio clock so the rhythm of a
+  // chirp survives the polling. Browsers only play sound after a tap, hence the button.
+  let ac = null, thoughtOsc = null, thoughtGain = null, sndSince = 0, sndBase = null;
+  const THOUGHT_VOL = 0.035, BEEP_VOL = 0.09, SND_LEAD_S = 0.3;
+  function beepAt(when, hz, ms) {
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.type = 'square'; o.frequency.value = hz;
+    g.gain.setValueAtTime(BEEP_VOL, when);
+    g.gain.setValueAtTime(0, when + ms / 1000);
+    o.connect(g).connect(ac.destination);
+    o.start(when); o.stop(when + ms / 1000 + 0.02);
+  }
+  async function pollSound() {
+    while (ac) {
+      try {
+        const j = await (await fetch('/sound?since=' + sndSince)).json();
+        thoughtOsc.frequency.setTargetAtTime(Math.max(20, j.hz), ac.currentTime, 0.08);
+        if (sndSince === 0) sndSince = j.seq;      // only what comes after Listen was pressed
+        for (const [seq, t, hz, ms] of j.beeps) {
+          if (seq <= sndSince) continue;
+          let when = sndBase === null ? null : sndBase + t / 1000;
+          if (when === null || when < ac.currentTime || when > ac.currentTime + 2) {
+            sndBase = ac.currentTime + SND_LEAD_S - t / 1000;   // (re)anchor her clock to ours
+            when = sndBase + t / 1000;
+          }
+          beepAt(when, hz, ms);
+        }
+        sndSince = Math.max(sndSince, j.seq);
+      } catch (e) { /* she's busy or away: try again */ }
+      await new Promise(r => setTimeout(r, 150));
+    }
+  }
+  function listen() {
+    const btn = document.getElementById('listenBtn');
+    if (ac) { ac.close(); ac = null; btn.textContent = '🔊 LISTEN'; return; }
+    ac = new (window.AudioContext || window.webkitAudioContext)();
+    thoughtOsc = ac.createOscillator(); thoughtGain = ac.createGain();
+    thoughtOsc.type = 'square'; thoughtOsc.frequency.value = 196;
+    thoughtGain.gain.value = THOUGHT_VOL;
+    thoughtOsc.connect(thoughtGain).connect(ac.destination);
+    thoughtOsc.start();
+    sndSince = 0; sndBase = null;
+    btn.textContent = '🔇 MUTE';
+    pollSound();
+  }
+  document.addEventListener('keydown', e => {
+    if (e.key.toLowerCase() === 'l' && e.target.tagName !== 'INPUT') listen();
   });
 
   // X cycles speed presets (100/75/50/25), same button the IR remote's

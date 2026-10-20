@@ -36,6 +36,7 @@ import keymap as keys_window         # scripts/keymap.py: every key and button, 
 from gamepad_drive import PadDrive, rumble_level  # any gamepad, or ARM's flight stick
 import mind          # scripts/mind.py: her LLM mind (M), the same file in every controller
 import mind_panel    # scripts/mind_panel.py: the mind's strip in the window
+from nika_sound import NikaSound   # L: hear her here (she has no speaker)
 
 # ----------------------------------------------------------------------------
 # Transport
@@ -243,6 +244,7 @@ def main():
     f_med = pygame.font.SysFont("monospace", 15, bold=True)
     f_sml = pygame.font.SysFont("monospace", 12)
 
+    sound = NikaSound(link.base)   # L: her thought and beeps on this PC's speakers
     mode = "wasd"   # mirrors the firmware's WASD boot default
     active_drive = None
     buttons = []
@@ -341,6 +343,8 @@ def main():
                     keys_window.open_window()
                 elif ev.key == pygame.K_m and mind_state["capable"]:   # her MIND mode on / off
                     set_mode("wasd" if her_mind.on else "mind")
+                elif ev.key == pygame.K_l:   # listen: she has no speaker, so she plays here
+                    sound.toggle()
                 elif ev.key == pygame.K_1:
                     set_mode("wasd")
                 elif ev.key == pygame.K_2:
@@ -443,7 +447,10 @@ def main():
         stat_tile(screen, f_sml, f_med, 20, sy + 216, colw, "SPEED %", t.get("speed", "--"))
         stat_tile(screen, f_sml, f_med, 30 + colw, sy + 216, colw, "GUARD", guard_txt)
 
-        hint = f_sml.render("1/2/3 mode - WASD/QAED drive - space stop - esc quit", True, DIM)
+        if sound.on or sound.error:
+            ear = f"listening: {t.get('thought', '?')} {t.get('hz', '?')} Hz" if sound.on and not sound.error else sound.error
+            screen.blit(f_sml.render(f"L {ear}", True, GREEN if sound.on and not sound.error else DIM), (W - 260, 70))
+        hint = f_sml.render("1/2/3 mode - WASD/QAED drive - L listen - space stop - esc quit", True, DIM)
         screen.blit(hint, hint.get_rect(centerx=W // 2, y=H - 24))
 
         if her_mind.on:
@@ -455,6 +462,7 @@ def main():
         pygame.display.flip()
         clock.tick(60)
 
+    sound.on = False
     pygame.quit()
 
 

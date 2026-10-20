@@ -70,6 +70,7 @@ Her thought is heard, seen and acted on:
 - [x] WASD, TANK and OBSTACLE modes, the IR remote, NORA's IR fleet link (address `0x0DA5`), the drive PIN, Brainfuck talk, `SCAN`.
 - [x] The wall guard when you drive her, and ticks faster as a wall gets close.
 - [x] The fleet's WiFi ladder (the very bottom, below MILA), her own `NIKA` AP when she's alone, the dashboard on `:5013`, the imposter radar, ESP-NOW beacons. Everyone makes way for her: like MILA's, her ESP8266 can't hear them.
+- [x] **Listen** (she has no speaker): **🔊 LISTEN** on her dashboard (phone or PC browser) or **L** on the Python controller plays her thought, the synth's square wave at its Hz, humming underneath, and every beep, chirp and Brainfuck line her buzzer plays, on your phone's or PC's speaker. Her UNO reports each note to the ESP8266 (`SND:<Hz>,<ms>`), which serves them on `GET /sound?since=<n>` with her clock, so a chirp keeps its rhythm. Synthesised again on your side, not recorded: what you hear is what she played, not the room. Phones need the tap before they'll make a sound.
 - [x] **MIND mode** (from MILA's): the LLM on her PC controller drives her one short move at a time, and her synth brain's thought (and its Hz) is one of the things it senses, so it knows how she feels. **M** on the Python controller, or MIND on her dashboard while it's connected (x86 PC, 8 GB+ RAM, GTX 1050 or better). Her voice: Zira, extra high.
 
 </details>
@@ -150,6 +151,7 @@ Why: ENA and ENB need PWM, and on an UNO the Servo library takes Timer1 (no PWM 
 | Space | stop (controllers) |
 | M | her MIND mode on / off: the LLM on this PC drives her (Python controller; x86 PC, GTX 1050+) |
 | X | speed preset: 100, 75, 50, 25 % (web page) |
+| L | listen: her thought and beeps play on your phone / PC (LISTEN on the web page; she has no speaker) |
 | F1 | this window (Python controller; KEYS on the web page) |
 | Esc | quit (controllers) |
 | | *driving from the web page needs her PIN first (UNLOCK)* |
