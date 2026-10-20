@@ -63,6 +63,7 @@ const int buzzerPin = 8;
 const int oledDC = 9;
 const int oledCS = 10;
 const int synthCS = A5;
+const bool OLED_FLIP = true;        // her screen is mounted upside down: turn the picture 180 degrees
 SSD1306AsciiSpi oled;
 
 unsigned long lastNoraHeardMs = 0;  // NORA's last IR talk / beacon (runLinkCommand): THE SYNTH BRAIN
@@ -295,6 +296,7 @@ void setup() {
 
   SPI.begin();
   oled.begin(&Adafruit128x32, oledCS, oledDC);
+  oled.displayRemap(OLED_FLIP);
   oled.setFont(System5x7);
   oled.clear();
   oled.println(F("NIKA"));
