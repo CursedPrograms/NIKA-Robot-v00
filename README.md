@@ -79,7 +79,7 @@ Her thought is heard, seen and acted on:
 | Part | Notes |
 | :--- | :--- |
 | **UNO + WiFi R3** board (ATmega328P + ESP8266) | The same board as MILA, with its DIP switches |
-| **L298N** motor driver + tracked chassis | ENA / ENB on PWM pins 5 and 6 |
+| **L298N** motor driver + wooden tank chassis (like IDA's) | ENA / ENB on PWM pins 5 and 6 |
 | **HC-SR04** on a **servo** | Looks ahead and to both diagonals |
 | **IR obstacle sensor** (FC-51 style) | Only on/off: LOW when something is within the range set by its pot |
 | **16-LED RGB array** (WS2812) | Brightness capped in code so it doesn't overload the board |
