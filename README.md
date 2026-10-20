@@ -26,6 +26,11 @@
 
 - Robot Type: Tracked robot (UNO + WiFi R3, like [MILA](https://github.com/CursedPrograms/MILA-Robot-v00))
 
+<div align="center">
+  <img src="images/nika_avatar.jpg" alt="NIKA avatar: a human representation of the robot" width="320"/>
+  <p><i>NIKA</i></p>
+</div>
+
 NIKA is MILA's sister: the same board, tracks, modes, remote and fleet link, with a 16-LED RGB array, a small OLED, an infrared obstacle sensor and a synthesizer for a brain. Her drives are oscillators, and the loudest one is her thought: you can hear her think.
 
 ---
