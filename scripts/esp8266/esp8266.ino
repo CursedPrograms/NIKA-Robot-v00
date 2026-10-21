@@ -188,6 +188,7 @@ long   scanL = -1, scanF = -1, scanR = -1;   // the last SCAN, cm (999 = no echo
 unsigned long scanAtMs = 0;                  // when it came in (0 = never)
 bool   scanBusy    = false;                  // the UNO answered SCAN:BUSY (obstacle mode)
 bool   lastGuard   = false;   // true while the manual-mode collision guard has force-stopped the robot
+bool   wheelsLocked = false;  // her UNO's wheel lock (LOCK:1 / LOCK:0): NORA's IR LOCK or /motorlockOn
 
 // === SOUND ===
 // She has no speaker: her thought (the synth's square wave, lastHz) and every beep the UNO plays
@@ -298,6 +299,8 @@ void setup() {
   server.on("/fleet",  handleFleet);
   server.on("/radar",  handleRadar);
   server.on("/unlock", handleUnlock);
+  server.on("/motorlockOn",  handleMotorLockOn);
+  server.on("/motorlockOff", handleMotorLockOff);
   server.on("/scan",   handleScan);
   server.on("/mind",   handleMind);
   server.on("/chirp",  handleChirp);
@@ -397,6 +400,7 @@ void readArduinoLine() {
   if (line.startsWith("IRD:"))   lastIrd      = line.substring(4).toInt();
   if (line.startsWith("SPEED:")) lastSpeed    = line.substring(6).toInt();
   if (line.startsWith("GUARD:")) lastGuard    = line.substring(6).toInt() != 0;
+  if (line.startsWith("LOCK:"))  wheelsLocked = line.substring(5).toInt() != 0;
   if (line.startsWith("MOTOR:")) {
     int comma = line.indexOf(',');
     if (comma > 6) {
@@ -496,6 +500,21 @@ void handleRadar() {
 
 bool isController() {
   return controllerUnlocked && server.client().remoteIP() == controllerIP;
+}
+
+// The wheel lock over WiFi, as NORA's (RIFT's Lock all / Unlock all): locking is free,
+// unlocking needs her PIN. It's the same lock as NORA's IR LOCK / UNLOCK, kept on her UNO.
+void handleMotorLockOn() {
+  Serial.println("LOCK");
+  wheelsLocked = true;
+  server.send(200, "text/plain", "OK");
+}
+
+void handleMotorLockOff() {
+  if (server.arg("pw") != CONTROL_PIN) { server.send(403, "text/plain", "DENIED"); return; }
+  Serial.println("UNLOCK");
+  wheelsLocked = false;
+  server.send(200, "text/plain", "OK");
 }
 
 void handleUnlock() {
@@ -712,6 +731,7 @@ void handleStatus() {
 
   String json = "{";
   json += "\"mode\":\""  + currentMode       + "\",";
+  json += "\"lock\":"    + String(wheelsLocked ? 1 : 0) + ",";
   json += "\"cmd\":\""   + lastCommand        + "\",";
   json += "\"dist\":"    + String(lastDist)   + ",";
   json += "\"left\":\""  + lastLeft           + "\",";
@@ -756,8 +776,10 @@ void handleSound() {
 }
 
 // =====================
+// The page lives in flash (PROGMEM) and streams from there: as a String it was a 30 KB copy on
+// the heap every request, the ESP8266 ran out, and the page came back empty (just white).
 void handleRoot() {
-  String html = R"rawhtml(
+  static const char html[] PROGMEM = R"rawhtml(
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1421,5 +1443,5 @@ void handleRoot() {
 </html>
 )rawhtml";
 
-  server.send(200, "text/html", html);
+  server.send_P(200, "text/html", html);
 }
