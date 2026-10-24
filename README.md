@@ -146,9 +146,12 @@ Why: ENA and ENB need PWM, and on an UNO the Servo library takes Timer1 (no PWM 
 | 1 / 2 / 3 | WASD / TANK / OBSTACLE mode |
 | W / Up, S / Down | forward / back (WASD mode, hold) |
 | A / Left, D / Right | turn left / right (WASD mode, hold) |
+| W+A, W+D, S+A, S+D | curve: one track drives (Python controller; the stick too) |
+| | *Python controller: driving in OBSTACLE takes over (WASD); she stops when you let go* |
 | Q / A | left track forward / back (TANK mode, hold) |
 | E / D | right track forward / back (TANK mode, hold) |
-| Space | stop (controllers) |
+| Space | stop, in any mode (controllers; the STOP button too) |
+| EMULATE / VOICE / THEME | Python controller: a pretend NIKA on this PC / her voice / colours |
 | M | her MIND mode on / off: the LLM on this PC drives her (Python controller; x86 PC, GTX 1050+) |
 | X | speed preset: 100, 75, 50, 25 % (web page) |
 | L | listen: her thought and beeps play on your phone / PC (LISTEN on the web page; she has no speaker) |
@@ -160,9 +163,9 @@ Why: ENA and ENB need PWM, and on an UNO the Servo library takes Timer1 (no PWM 
 
 | Key | Does |
 |---|---|
-| Left stick / D-pad | drive (WASD mode) |
+| Left stick / D-pad | drive, half-way round curves (WASD mode; takes over from OBSTACLE) |
 | LB / RB, right stick, twist | turn left / right (Python controller) |
-| A (button 0) | stop |
+| A (button 0) | stop (any mode) |
 | B (1) / X (2) / Y (3) | OBSTACLE / WASD / TANK mode (Python controller) |
 | Start (7) | speed + 25 % (Python controller) |
 | | *C++, C# and F# controllers: stick or D-pad drive, triggers speed, A stops, bumpers change mode* |
@@ -207,7 +210,25 @@ Why: ENA and ENB need PWM, and on an UNO the Servo library takes Timer1 (no PWM 
 run.bat                          # Windows
 ./run.sh                         # Linux / macOS
 python scripts/nika_controller.py --host <her IP> --port 5013
+python scripts/nika_controller.py --emulate   # a pretend NIKA on this PC (scripts/fake_nika.py), no robot
 ```
+
+The controller (`scripts/nika_controller.py`):
+- **Two keys curve her**: W+A drives only her right track, so she arcs forward-left (W+D, S+A, S+D the same
+  way), and so does the stick half-way round: one track on, one off (no speed control on her UNO).
+- **Driving takes over**: driving in OBSTACLE puts her in WASD, and she stops when you let go. **STOP**
+  (Space, the pad's A) works in any mode.
+- **Settings stick**: mode and speed are sent again until her `/status` says so.
+- **EMULATE**: a pretend NIKA with her synth brain (calm, curious, caution and their pitches) in a pretend room.
+  **VOICE**: she talks through this PC (Zira, dreamy and musical: she hears in pitches). **L** still plays her
+  synth's thoughts here. **THEME**: DEFAULT, LIGHT or CUSTOM, from `colour_scheme.xml` (new: sampled from her
+  avatar: her purple eyes, synth and LEDs, the autumn leaves, the circuit badge).
+- Pads: Xbox, PlayStation and Switch pads all have the same buttons (`gamepad_drive.py`). Her MIND log:
+  `~/.robot_minds/logs/NIKA-<date>.log`.
+
+<div align="center">
+  <img src="images/screenshots/controller-python.png" alt="NIKA's controller on EMULATE" width="260"/>
+</div>
 </details>
 
 ---
