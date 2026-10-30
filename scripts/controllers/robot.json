@@ -1,0 +1,83 @@
+{
+ "name": "NIKA",
+ "port": 5013,
+ "host": "192.168.4.1",
+ "status": "/status",
+ "connect": [
+  "GET /unlock?pw=1234",
+  "GET /motorlockOff?pw=1234",
+  "GET /mode?v=wasd"
+ ],
+ "stop": "GET /cmd?v=STOP",
+ "keys": {
+  "w": "GET /cmd?v=FORWARD",
+  "s": "GET /cmd?v=BACKWARD",
+  "a": "GET /cmd?v=LEFT",
+  "d": "GET /cmd?v=RIGHT"
+ },
+ "buttons": [
+  [
+   "WASD",
+   "GET /mode?v=wasd"
+  ],
+  [
+   "OBSTACLE",
+   "GET /mode?v=obstacle"
+  ],
+  [
+   "FOLLOW",
+   "GET /mode?v=follow"
+  ],
+  [
+   "HELLO",
+   "GET /cmd?v=HELLO"
+  ],
+  [
+   "DANCE",
+   "GET /cmd?v=DANCE"
+  ],
+  [
+   "SPEED",
+   "GET /cmd?v=SPEEDCYCLE"
+  ],
+  [
+   "LOCK",
+   "GET /motorlockOn"
+  ]
+ ],
+ "tiles": [
+  [
+   "Front",
+   "dist",
+   " cm"
+  ],
+  [
+   "Left",
+   "left",
+   " cm"
+  ],
+  [
+   "Right",
+   "right",
+   " cm"
+  ],
+  [
+   "Thinks",
+   "thought",
+   ""
+  ],
+  [
+   "Pitch",
+   "hz",
+   " Hz"
+  ],
+  [
+   "Speed",
+   "speed",
+   "%"
+  ]
+ ],
+ "background": "#110C14",
+ "text": "#F3ECE2",
+ "accent": "#D9703A"
+}

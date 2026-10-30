@@ -47,6 +47,10 @@ NIKA is MILA's sister: the same board, tracks, modes, remote and fleet link, wit
 
 **Colours:** `colour_scheme.xml` comes from her avatar: a rust orange lead, with her LED purple and badge green beside it.
 
+**Other languages:** `scripts/controllers` has this robot's controller in C#, F#, Rust, Go and Julia, all reading one `robot.json`: W A S D to drive, the mode buttons and the sensors. See its README for how to run each.
+
+**Session analysis and training data (Fortran):** press **CSV** in her Python controller to save the session to `Documents/NIKA-telemetry`, in the same format as MILA's, plus the thought she was having and its pitch. `scripts/run-fortran` turns it into a report: timing, modes, sensor stats and close calls. `scripts/run-dataset` turns her human-driven sessions into a dataset for teaching her to drive herself. Needs `gfortran`.
+
 ## Related Projects
 
 
