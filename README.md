@@ -35,6 +35,10 @@ NIKA is MILA's sister: the same board, tracks, modes, remote and fleet link, wit
 
 ---
 
+<div align="center">
+  <img src="images/screenshots/controller.gif" alt="NIKA's Python controller, driving a pretend NIKA" width="420"/>
+</div>
+
 **Windows controller:** [`builds/NIKA-Controller.exe`](builds/NIKA-Controller.exe) shows NIKA's own web page in a window, so it always matches the page. Source: `scripts/web_controller`.
 
 ## Related Projects
