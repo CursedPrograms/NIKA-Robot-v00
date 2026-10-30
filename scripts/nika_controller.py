@@ -41,6 +41,7 @@ import controller_kit as kit         # scripts/controller_kit.py: themes, settin
 from gamepad_drive import PadDrive, rumble_level  # any gamepad, or ARM's flight stick
 import mind          # scripts/mind.py: her LLM mind (M), the same file in every controller
 import mind_panel    # scripts/mind_panel.py: the mind's strip in the window
+import nika_telemetry
 from nika_sound import NikaSound   # L: hear her here (she has no speaker)
 
 # ----------------------------------------------------------------------------
@@ -336,6 +337,15 @@ def main():
         add((280, 100, 120, 40), "OBSTACLE", lambda: set_mode("obstacle")),
         add((20, 200, 90, 36), "FOLLOW", lambda: set_mode("follow")),
     ]
+    recorder = nika_telemetry.Recorder()   # the session, for scripts/fortran
+
+    def export_csv():
+        path = recorder.export()
+        kit_note = f"saved {os.path.basename(path)}" if path else "no samples yet"
+        print(f"EXPORT CSV: {kit_note}")
+        pygame.display.set_caption(f"NIKA - {kit_note}")
+
+    add((116, 200, 58, 36), "CSV", export_csv)
     show_btns = [add((250, 200, 72, 36), "HELLO", lambda: link.cmd("HELLO")),   # on the spot, in WASD or TANK
                  add((328, 200, 72, 36), "DANCE", lambda: link.cmd("DANCE"))]
 
@@ -513,6 +523,8 @@ def main():
         # ---- draw ----
         screen.fill(BG)
         t = link.telemetry()
+        if link.ok:
+            recorder.add(t)
         # her mode is the switch: MIND (from M here, or her page) = thinking, anything else = not
         in_mind = link.ok and t.get("mode") == "mind"
         if in_mind and not her_mind.on and mind_state["capable"]:
