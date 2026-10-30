@@ -1,16 +1,16 @@
 /* DREAM Robotics site stylesheet: layout shared by every robot, NIKA's colours
    (violet and pink, her curious and social thoughts). */
 :root {
-  --bg: #070712;
-  --panel: #0D0D21;
-  --border: #191943;
-  --accent: #963CFF;
-  --accent2: #FF288C;
-  --green: #00ff88;
-  --text: #E9F1F2;
-  --sub: #94A7A8;
-  --glow: 150, 60, 255;
-  --glow2: 33, 131, 168;
+  --bg: #110C14;
+  --panel: #1C1420;
+  --border: #3A2A36;
+  --accent: #D9703A;
+  --accent2: #963CFF;
+  --green: #3FB874;
+  --text: #F3ECE2;
+  --sub: #B8A99E;
+  --glow: 217, 112, 58;
+  --glow2: 150, 60, 255;
   --mono: ui-monospace, "Cascadia Code", Consolas, "SF Mono", Menlo, monospace;
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
@@ -32,7 +32,7 @@ code, pre, .mono { font-family: var(--mono); }
 /* nav */
 nav {
   position: sticky; top: 0; z-index: 10;
-  background: rgba(7, 7, 18, .85);
+  background: rgba(17, 12, 20, .85);
   backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--border);
 }
@@ -82,7 +82,7 @@ h1 {
 .screens .shot { margin: 0; }
 .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; vertical-align: middle; }
 .yes { color: var(--green); }
-.no { color: #576A6B; }
+.no { color: #7A6B68; }
 nav ul a.active { color: var(--accent); }
 .spaced { margin-top: 16px; }
 .shot.narrow { max-width: 320px; }
@@ -150,7 +150,7 @@ pre {
   background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
   padding: 16px 18px; overflow-x: auto; font-size: 13.5px; line-height: 1.6; margin: 0 0 16px;
 }
-pre .c { color: #576A6B; }
+pre .c { color: #7A6B68; }
 pre .p { color: var(--accent); user-select: none; }
 :not(pre) > code { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; font-size: .9em; }
 
