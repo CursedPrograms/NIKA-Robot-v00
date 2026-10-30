@@ -326,14 +326,17 @@ def main():
         nonlocal mode
         mode = m
         pending.want("mode", m, lambda: link.mode(m))
-        for b, name in zip(mode_btns, ("wasd", "tank", "obstacle")):
+        for b, name in zip(mode_btns, ("wasd", "tank", "obstacle", "follow")):
             b.active = (name == m)
 
     mode_btns = [
         add((20, 100, 120, 40), "WASD", lambda: set_mode("wasd"), True),
         add((150, 100, 120, 40), "TANK", lambda: set_mode("tank")),
         add((280, 100, 120, 40), "OBSTACLE", lambda: set_mode("obstacle")),
+        add((20, 200, 90, 36), "FOLLOW", lambda: set_mode("follow")),
     ]
+    show_btns = [add((250, 200, 72, 36), "HELLO", lambda: link.cmd("HELLO")),   # on the spot, in WASD or TANK
+                 add((328, 200, 72, 36), "DANCE", lambda: link.cmd("DANCE"))]
 
     # Speed presets mirror the firmware's speedPresets[] (100/75/50/25).
     # speed_state tracks the last-known value, kept in sync from telemetry
@@ -356,14 +359,14 @@ def main():
     def take_over():
         """Driving her while she drives herself (OBSTACLE): WASD, so she does what's pressed and
         stops on release. (Her ESP8266 ignores /cmd drives in OBSTACLE.)"""
-        if mode == "obstacle":
+        if mode in ("obstacle", "follow"):
             set_mode("wasd")
 
     def stop_all():
         """STOP, in any mode: out of OBSTACLE / MIND, tracks still."""
         nonlocal active_drive, curve
         active_drive, curve = None, None
-        if mode in ("obstacle", "mind"):
+        if mode in ("obstacle", "follow", "mind"):
             set_mode("wasd")
         link.cmd("STOP")
 
@@ -448,6 +451,12 @@ def main():
                     set_mode("wasd" if her_mind.on else "mind")
                 elif ev.key == pygame.K_l:   # listen: she has no speaker, so she plays here
                     sound.toggle()
+                elif ev.key == pygame.K_f:
+                    set_mode("follow")
+                elif ev.key == pygame.K_h:
+                    link.cmd("HELLO")
+                elif ev.key == pygame.K_n:
+                    link.cmd("DANCE")
                 elif ev.key == pygame.K_1:
                     set_mode("wasd")
                 elif ev.key == pygame.K_2:
@@ -519,9 +528,9 @@ def main():
                 speed_state["pct"] = int(float(t["speed"]))
             except (TypeError, ValueError):
                 pass
-        if t.get("mode") in ("wasd", "tank", "obstacle", "mind") and t["mode"] != mode and pending.value("mode") is None:
+        if t.get("mode") in ("wasd", "tank", "obstacle", "follow", "mind") and t["mode"] != mode and pending.value("mode") is None:
             mode = t["mode"]
-            for b, name in zip(mode_btns, ("wasd", "tank", "obstacle")):
+            for b, name in zip(mode_btns, ("wasd", "tank", "obstacle", "follow")):
                 b.active = (name == mode)
 
         # her voice, from what changed (her MIND talks for itself)
@@ -552,7 +561,7 @@ def main():
         sub = f_sml.render(kit.fit(where, f_sml, W - 90), True, col)
         screen.blit(sub, sub.get_rect(centerx=W // 2, y=46))
 
-        for b in mode_btns + [emu_btn, voice_btn, theme_btn]:
+        for b in mode_btns + show_btns + [emu_btn, voice_btn, theme_btn]:
             b.draw(screen)
 
         for b in speed_btns:
