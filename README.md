@@ -35,13 +35,23 @@ NIKA is MILA's sister: the same board, tracks, modes, remote and fleet link, wit
 
 ---
 
+**Windows controller:** [`builds/NIKA-Controller.exe`](builds/NIKA-Controller.exe) shows NIKA's own web page in a window, so it always matches the page. Source: `scripts/web_controller`.
+
 ## Related Projects
 
-- [MILA-Robot-v00](https://github.com/CursedPrograms/MILA-Robot-v00)
+- [ARIA-Robot-v00](https://github.com/CursedPrograms/ARIA-Robot-v00)
+- [KIDA-Robot-v01](https://github.com/CursedPrograms/KIDA-Robot-v01)
+- [KIDA-Robot-v00](https://github.com/CursedPrograms/KIDA-Robot-v00)
+- [WHIP-Robot-v00](https://github.com/CursedPrograms/WHIP-Robot-v00)
 - [NORA-Robot-v00](https://github.com/CursedPrograms/NORA-Robot-v00)
+- [MILA-Robot-v00](https://github.com/CursedPrograms/MILA-Robot-v00)
+- [IDA-Robot-v00](https://github.com/CursedPrograms/IDA-Robot-v00)
+- [ARM-Robot-v01](https://github.com/CursedPrograms/ARM-Robot-v01)
+- [DREAM](https://github.com/CursedPrograms/DREAM)
 - [RIFT](https://github.com/CursedPrograms/RIFT)
 - [RITA](https://github.com/CursedPrograms/RITA)
-- [DREAM](https://github.com/CursedPrograms/DREAM)
+- [NINA](https://github.com/CursedPrograms/NINA)
+- [TINA](https://github.com/CursedPrograms/TINA)
 
 ---
 
