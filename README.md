@@ -45,6 +45,8 @@ NIKA is MILA's sister: the same board, tracks, modes, remote and fleet link, wit
 
 ---
 
+**Colours:** `colour_scheme.xml` comes from her avatar: a rust orange lead, with her LED purple and badge green beside it.
+
 ## Related Projects
 
 
