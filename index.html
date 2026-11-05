@@ -22,8 +22,8 @@
     <a class="brand" href="#top">NIKA</a>
     <ul>
       <li><a href="#overview">Overview</a></li>
-      <li><a href="#brain">Synth brain</a></li>
       <li><a href="#hardware">Hardware</a></li>
+      <li><a href="#brain">Synth brain</a></li>
       <li><a href="#quickstart">Quick start</a></li>
       <li><a href="https://github.com/CursedPrograms/NIKA-Robot-v00">GitHub</a></li>
     </ul>
@@ -57,7 +57,6 @@
 </header>
 
 <main>
-
 <section id="overview">
   <div class="wrap">
     <h2>Overview</h2>
@@ -73,6 +72,23 @@
       <div class="card"><span class="k">Safe</span><h4>The guard and her PIN</h4><p>Driven by hand she won&rsquo;t go into a wall, ticks faster as one gets close, and only an unlocked controller can drive her.</p></div>
       <div class="card"><span class="k">Mind</span><h4>MIND mode</h4><p>The LLM on her PC controller drives her, one short move at a time &mdash; and it feels what her synth brain feels: her thought and its Hz are among its senses. <b>M</b> on the controller.</p></div>
     </div>
+  </div>
+</section>
+
+<section id="hardware">
+  <div class="wrap">
+    <h2>Hardware</h2>
+    <h3 class="title">What she's built from</h3>
+    <ol class="parts">
+      <li><span class="n">01</span> UNO + WiFi R3 board (ATmega328P + ESP8266), like MILA</li>
+      <li><span class="n">02</span> L298N motor driver and a wooden tank chassis (like IDA&rsquo;s)</li>
+      <li><span class="n">03</span> HC-SR04 ultrasonic on a servo</li>
+      <li><span class="n">04</span> IR obstacle sensor (on/off)</li>
+      <li><span class="n">05</span> 16-LED RGB array (WS2812)</li>
+      <li><span class="n">06</span> SSD1306 128&times;32 SPI OLED</li>
+      <li><span class="n">07</span> Synthesizer kit (XR2206-style) + MCP41010 digital pot</li>
+      <li><span class="n">08</span> IR remote + receiver, buzzer</li>
+    </ol>
   </div>
 </section>
 
@@ -95,23 +111,6 @@
   </div>
 </section>
 
-<section id="hardware">
-  <div class="wrap">
-    <h2>Hardware</h2>
-    <h3 class="title">What she's built from</h3>
-    <ol class="parts">
-      <li><span class="n">01</span> UNO + WiFi R3 board (ATmega328P + ESP8266), like MILA</li>
-      <li><span class="n">02</span> L298N motor driver and a wooden tank chassis (like IDA&rsquo;s)</li>
-      <li><span class="n">03</span> HC-SR04 ultrasonic on a servo</li>
-      <li><span class="n">04</span> IR obstacle sensor (on/off)</li>
-      <li><span class="n">05</span> 16-LED RGB array (WS2812)</li>
-      <li><span class="n">06</span> SSD1306 128&times;32 SPI OLED</li>
-      <li><span class="n">07</span> Synthesizer kit (XR2206-style) + MCP41010 digital pot</li>
-      <li><span class="n">08</span> IR remote + receiver, buzzer</li>
-    </ol>
-  </div>
-</section>
-
 <section id="quickstart">
   <div class="wrap">
     <h2>Quick start</h2>
@@ -122,6 +121,14 @@
       <li>Put the synth kit&rsquo;s jumper on square wave, and tune <code>SYNTH_K</code> by ear.</li>
       <li>Power her on and open <code>http://&lt;her IP&gt;:5013/</code>, or run <code>run.bat</code>.</li>
     </ol>
+  </div>
+</section>
+
+<section id="signal">
+  <div class="wrap">
+    <h2>WiFi signal</h2>
+    <h3 class="title">How well she hears the network</h3>
+    <p>Her <code>/status</code> has <code>wifi_rssi</code> (her signal, 0 while she hosts), which <a href="https://cursedprograms.github.io/RITA/">RITA</a>&rsquo;s STATS shows. Her ESP8266 has no Bluetooth: Bluetooth controllers reach her through NORA&rsquo;s IR link.</p>
   </div>
 </section>
 
@@ -149,6 +156,8 @@
       <a href="https://github.com/CursedPrograms/RIFT">RIFT</a>
       <a href="https://github.com/CursedPrograms/RITA">RITA</a>
       <a href="https://github.com/CursedPrograms/DREAM">DREAM</a>
+      <a href="https://github.com/CursedPrograms/AURA">AURA</a>
+      <a href="https://github.com/CursedPrograms/FLORA-Robot-v00">FLORA-Robot-v00</a>
     </div>
   </div>
 </section>
@@ -162,7 +171,7 @@
 <section class="eco">
   <div class="eco-title">The DREAM Robotics ecosystem</div>
   <div><strong>Minds</strong> — <a href="https://cursedprograms.github.io/DREAM/">DREAM</a> companion · <a href="https://cursedprograms.github.io/TINA/">TINA</a> engineer · <a href="https://cursedprograms.github.io/NINA/">NINA</a> caretaker · <a href="https://cursedprograms.github.io/RIFT/">RIFT</a> fleet hub · <a href="https://github.com/CursedPrograms/LYCEA">LYCEA</a> training school</div>
-  <div><strong>Robots</strong> — <a href="https://cursedprograms.github.io/NORA-Robot-v00/">NORA</a> · <a href="https://cursedprograms.github.io/MILA-Robot-v00/">MILA</a> · <a href="https://cursedprograms.github.io/WHIP-Robot-v00/">WHIP</a> · <a href="https://cursedprograms.github.io/KIDA-Robot-v00/">KIDA-00</a> · <a href="https://cursedprograms.github.io/KIDA-Robot-v01/">KIDA-01</a> · <a href="https://cursedprograms.github.io/IDA-Robot-v00/">IDA</a> · <a href="https://cursedprograms.github.io/ARM-Robot-v01/">ARM</a> · <a href="https://cursedprograms.github.io/NIKA-Robot-v00/">NIKA</a> · <a href="https://cursedprograms.github.io/ARIA-Robot-v00/">ARIA</a></div>
+  <div><strong>Robots</strong> — <a href="https://cursedprograms.github.io/NORA-Robot-v00/">NORA</a> · <a href="https://cursedprograms.github.io/MILA-Robot-v00/">MILA</a> · <a href="https://cursedprograms.github.io/WHIP-Robot-v00/">WHIP</a> · <a href="https://cursedprograms.github.io/KIDA-Robot-v00/">KIDA-00</a> · <a href="https://cursedprograms.github.io/KIDA-Robot-v01/">KIDA-01</a> · <a href="https://cursedprograms.github.io/IDA-Robot-v00/">IDA</a> · <a href="https://cursedprograms.github.io/ARM-Robot-v01/">ARM</a> · <a href="https://cursedprograms.github.io/NIKA-Robot-v00/">NIKA</a> · <a href="https://cursedprograms.github.io/ARIA-Robot-v00/">ARIA</a> · <a href="https://cursedprograms.github.io/AURA/">AURA</a> weather · <a href="https://cursedprograms.github.io/FLORA-Robot-v00/">FLORA</a> gardener</div>
   <div><strong>Remotes</strong> — <a href="https://cursedprograms.github.io/RITA/">RITA</a> handheld remote</div>
 </section>
 <!-- DREAM-ECOSYSTEM:END -->

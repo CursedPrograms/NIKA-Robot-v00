@@ -51,8 +51,9 @@ NIKA is MILA's sister: the same board, tracks, modes, remote and fleet link, wit
 
 **Session analysis and training data (Fortran):** press **CSV** in her Python controller to save the session to `Documents/NIKA-telemetry`, in the same format as MILA's, plus the thought she was having and its pitch. `scripts/run-fortran` turns it into a report: timing, modes, sensor stats and close calls. `scripts/run-dataset` turns her human-driven sessions into a dataset for teaching her to drive herself. Needs `gfortran`.
 
-## Related Projects
+---
 
+## Related Projects
 
 <table>
   <tr>
@@ -71,12 +72,16 @@ NIKA is MILA's sister: the same board, tracks, modes, remote and fleet link, wit
     <td align="center"><a href="https://github.com/CursedPrograms/RITA"><img src="https://raw.githubusercontent.com/CursedPrograms/RITA/main/images/avatar_round.png" width="72" alt="RITA"><br>RITA</a></td>
     <td align="center"><a href="https://github.com/CursedPrograms/NINA"><img src="https://raw.githubusercontent.com/CursedPrograms/NINA/main/images/avatar_round.png" width="72" alt="NINA"><br>NINA</a></td>
     <td align="center"><a href="https://github.com/CursedPrograms/TINA"><img src="https://raw.githubusercontent.com/CursedPrograms/TINA/main/images/avatar_round.png" width="72" alt="TINA"><br>TINA</a></td>
+    <td align="center"><a href="https://github.com/CursedPrograms/AURA"><img src="https://raw.githubusercontent.com/CursedPrograms/AURA/main/images/avatar_round.png" width="72" alt="AURA"><br>AURA</a></td>
+    <td align="center"><a href="https://github.com/CursedPrograms/FLORA-Robot-v00"><img src="https://raw.githubusercontent.com/CursedPrograms/FLORA-Robot-v00/main/images/avatar_round.png" width="72" alt="FLORA"><br>FLORA</a></td>
   </tr>
 </table>
 
 ---
 
 ## Overview
+
+**Website: <https://cursedprograms.github.io/NIKA-Robot-v00/>**
 
 <details open>
 <summary><b>Overview</b></summary>
@@ -112,7 +117,7 @@ Her thought is heard, seen and acted on:
 
 ---
 
-## Prerequisites
+## Hardware
 
 <details>
 <summary><b>Hardware</b></summary>
@@ -142,9 +147,7 @@ The Python controller: `pip install -r requirements.txt` (pygame, requests), or 
 
 </details>
 
----
-
-## Pinouts
+### Pinout
 
 <details open>
 <summary><b>UNO pins (a first plan: change the numbers at the top of NIKA.ino to match the wiring)</b></summary>
@@ -235,7 +238,7 @@ Why: ENA and ENB need PWM, and on an UNO the Servo library takes Timer1 (no PWM 
 
 ---
 
-## How to Run
+## Quick start
 
 <details open>
 <summary><b>View How to Run</b></summary>
@@ -272,6 +275,14 @@ The controller (`scripts/nika_controller.py`):
 
 ---
 
+## WiFi signal
+
+Her `/status` has `wifi_rssi` (her signal, 0 while she hosts), which [RITA](https://github.com/CursedPrograms/RITA)'s STATS shows. Her ESP8266 has no Bluetooth: Bluetooth controllers reach her through NORA's IR link.
+
+<!-- DREAM-ECOSYSTEM:START -->
+
+---
+
 <div align="center">&copy; Cursed Entertainment 2026</div>
 
 <div align="center">
@@ -282,14 +293,9 @@ The controller (`scripts/nika_controller.py`):
 
 ---
 
-## WiFi signal
-
-Her `/status` has `wifi_rssi` (her signal, 0 while she hosts), which [RITA](https://github.com/CursedPrograms/RITA)'s STATS shows. Her ESP8266 has no Bluetooth: Bluetooth controllers reach her through NORA's IR link.
-
-<!-- DREAM-ECOSYSTEM:START -->
 ## The DREAM Robotics ecosystem
 
 **Minds** — [DREAM](https://github.com/CursedPrograms/DREAM) companion · [TINA](https://github.com/CursedPrograms/TINA) engineer · [NINA](https://github.com/CursedPrograms/NINA) caretaker · [RIFT](https://github.com/CursedPrograms/RIFT) fleet hub · [LYCEA](https://github.com/CursedPrograms/LYCEA) training school  
-**Robots** — [NORA](https://github.com/CursedPrograms/NORA-Robot-v00) · [MILA](https://github.com/CursedPrograms/MILA-Robot-v00) · [WHIP](https://github.com/CursedPrograms/WHIP-Robot-v00) · [KIDA-00](https://github.com/CursedPrograms/KIDA-Robot-v00) · [KIDA-01](https://github.com/CursedPrograms/KIDA-Robot-v01) · [IDA](https://github.com/CursedPrograms/IDA-Robot-v00) · [ARM](https://github.com/CursedPrograms/ARM-Robot-v01) · [NIKA](https://github.com/CursedPrograms/NIKA-Robot-v00) · [ARIA](https://github.com/CursedPrograms/ARIA-Robot-v00)  
+**Robots** — [NORA](https://github.com/CursedPrograms/NORA-Robot-v00) · [MILA](https://github.com/CursedPrograms/MILA-Robot-v00) · [WHIP](https://github.com/CursedPrograms/WHIP-Robot-v00) · [KIDA-00](https://github.com/CursedPrograms/KIDA-Robot-v00) · [KIDA-01](https://github.com/CursedPrograms/KIDA-Robot-v01) · [IDA](https://github.com/CursedPrograms/IDA-Robot-v00) · [ARM](https://github.com/CursedPrograms/ARM-Robot-v01) · [NIKA](https://github.com/CursedPrograms/NIKA-Robot-v00) · [ARIA](https://github.com/CursedPrograms/ARIA-Robot-v00) · [AURA](https://github.com/CursedPrograms/AURA) weather · [FLORA](https://github.com/CursedPrograms/FLORA-Robot-v00) gardener  
 **Remotes** — [RITA](https://github.com/CursedPrograms/RITA) handheld remote  
 <!-- DREAM-ECOSYSTEM:END -->
