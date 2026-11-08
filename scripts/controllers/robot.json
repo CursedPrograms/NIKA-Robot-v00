@@ -41,6 +41,14 @@
    "GET /cmd?v=SPEEDCYCLE"
   ],
   [
+   "SOUND",
+   "GET /talkmute?on=toggle"
+  ],
+  [
+   "CHAT",
+   "GET /talkmute?chat_off=toggle"
+  ],
+  [
    "LOCK",
    "GET /motorlockOn"
   ]
@@ -75,6 +83,16 @@
    "Speed",
    "speed",
    "%"
+  ],
+  [
+   "Sound off",
+   "talk_muted",
+   ""
+  ],
+  [
+   "Chat off",
+   "chat_off",
+   ""
   ]
  ],
  "background": "#110C14",

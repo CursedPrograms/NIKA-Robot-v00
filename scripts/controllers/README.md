@@ -2,7 +2,7 @@
 
 Python and the Windows exe are NIKA's main controllers. These are the same small controller in five languages, all reading `robot.json`, which holds NIKA's commands, buttons and sensors. Change it there and they all change.
 
-Hold W / S to drive forward and back, A / D to turn. Space or STOP stops it in any mode. These have no keys, click them in the window: WASD, OBSTACLE, FOLLOW, HELLO, DANCE, SPEED, LOCK. Pass the address as the first argument, or type it in.
+Hold W / S to drive forward and back, A / D to turn. Space or STOP stops it in any mode. These have no keys, click them in the window: WASD, OBSTACLE, FOLLOW, HELLO, DANCE, SPEED, SOUND (her buzzer when she chats: off, she chats quietly), CHAT (her Brainfuck with the fleet at all), LOCK. Pass the address as the first argument, or type it in.
 
 | Language | UI | Run |
 |---|---|---|
